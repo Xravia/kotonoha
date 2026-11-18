@@ -1,0 +1,16 @@
+Kotonoha uses these freely licensed works. Thank you to their authors.
+
+JMdict (Japanese–English dictionary) and KANJIDIC2 (kanji dictionary)
+  © Electronic Dictionary Research and Development Group, used under the Creative Commons Attribution-ShareAlike 4.0 licence.
+  https://www.edrdg.org/edrdg/licence.html
+  The compact copy in jmdict.js is derived from JMdict 1.08 and is shared under the same licence.
+
+kuromoji.js (Japanese morphological analyser), Apache License 2.0, https://github.com/takuyaa/kuromoji.js
+
+IPADIC (the dictionary kuromoji.js uses), © Nara Institute of Science and Technology. Its licence permits use, copying and
+  redistribution provided the copyright notice is retained. Full text: https://github.com/taku910/mecab/blob/master/mecab-ipadic/COPYING
+
+JLPT word lists: compiled by Jonathan Waller (tanos.co.uk), Creative Commons Attribution licence.
+
+KanjiVG (stroke order and the parts of each character), © Ulrich Apel, Creative Commons Attribution-ShareAlike 3.0.
+  https://kanjivg.tagaini.net  The compact copy in strokes.js is derived from KanjiVG and is shared under the same licence.
