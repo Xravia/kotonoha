@@ -1062,6 +1062,35 @@ button.kcell:hover { border-color: var(--ai); }
   table.lessons { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 
+/* ---------- finding songs online ---------- */
+.find-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; margin: 14px 0; border: 1px solid var(--ink); border-radius: var(--r); background: var(--surface); }
+.find-card h2 { font-size: 18px; font-weight: 400; }
+.find-form { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+.find-form input { flex: 1; min-width: 0; font-size: 17px; padding: 10px 12px; }
+.find-busy { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.find-busy .meter { flex: 0 0 120px; }
+.find-sec { margin-top: 18px; }
+.find-list, .find-songs { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.find-songs { margin: 6px 0 4px 14px; }
+.find-row { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.find-row:hover, .find-row:focus-visible { border-color: var(--ink); }
+.find-row.song .find-t::before { content: '♪ '; color: var(--shu); }
+.find-anime.open > .find-row { border-color: var(--ink); }
+.find-t { font-weight: 600; }
+.find-song { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; padding: 16px; border: 1px solid var(--ink); border-radius: var(--r); background: var(--surface); }
+.find-thumb { width: 240px; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--well); display: grid; place-items: center; font-size: 40px; color: var(--ink-3); }
+.find-song-body { flex: 1 1 260px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.find-song-body h2 { font-family: var(--f-jp); font-size: 22px; font-weight: 500; }
+.find-facts { list-style: none; padding: 0; margin: 4px 0; display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+.find-hint { margin-top: 14px; }
+.yt-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.yt-wrap iframe, .yt-wrap .yt-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.en-src { display: block; margin-top: 2px; font-size: 11.5px; color: var(--ink-3); font-style: normal; }
+.qt-sense { grid-template-columns: 1fr !important; }
+.qt-sense .opt-g { text-align: left; line-height: 1.35; }
+.th-slot .yt-wrap { width: 100%; height: 100%; aspect-ratio: auto; }
+.th-slot:not(.has-media) .yt-wrap { visibility: hidden; }
+
 </style>
 </head>
 <body>
@@ -11761,7 +11790,7 @@ button.kcell:hover { border-color: var(--ai); }
 比率	ひりつ	ratio, proportion, percentage	1	0
 </script>
 <script>
-window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-18","hosted":true};
+window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-19","hosted":true,"web":"https://xravia.github.io/kotonoha/"};
 </script>
 <script>
 /* ===== 00-util.js ===== */
@@ -12997,6 +13026,8 @@ const Lib = {
     await Store.del('mp_' + id);
     MediaCache.del(id);
   },
+  /** Forget cached stage analyses of a lesson (after its lines changed in place). */
+  dropStageCache(id) { for (const k of Array.from(this._stageCache.keys())) if (k.indexOf(id + ':') === 0) this._stageCache.delete(k); },
   async getStage(m, n) {
     const ck = m.id + ':' + n;
     if (this._stageCache.has(ck)) return this._stageCache.get(ck);
@@ -14243,7 +14274,17 @@ const Offline = {
       doc = this.analyseStage(m, n, doc && doc.auto ? doc : (doc || null));
       try { await Lib.saveStage(m, n, doc); } catch (e) { console.warn(e); }
     }
+    if (doc && Array.isArray(doc.lines)) this.withEnglish(m, doc);
     return doc && Array.isArray(doc.lines) ? doc : null;
+  },
+  /** Lines can carry a translation from the song's lyrics page (line.en); analyses without one of their own use it. */
+  withEnglish(m, doc) {
+    for (const A of doc.lines) {
+      const L = m.lines[A.i];
+      if (L && L.en && (!A.en || A.enSrc)) { A.en = L.en; A.enSrc = L.enSrc || 'the lyrics page'; }
+      else if (A.enSrc && !(L && L.en)) { delete A.en; delete A.enSrc; }
+    }
+    return doc;
   },
   /** All stages of a lesson. Missing ones come back null when nothing can analyse them. */
   async all(m) {
@@ -14627,6 +14668,218 @@ const Packs = {
       toast(r.merged ? (r.lines ? plural(r.lines, 'line') + ' of “' + r.m.title + '” updated from the pack.' : '“' + r.m.title + '” is already up to date.') : '“' + r.m.title + '” added.', 'good');
       return r;
     } catch (e) { toast(e && e.message && /pack/.test(e.message) ? e.message : 'That file could not be read as a lesson pack.', 'bad'); return null; }
+  }
+};
+
+/* ===== 49-sites.js ===== */
+/* ---------- 49-sites: songs from animesonglyrics.com ----------
+   Search, an anime's song list, and a song page: its Japanese lyrics, romaji and English translation, plus the
+   YouTube music video the page plays. The site does not let other pages read it directly (no CORS), so pages are
+   read through a reader service (r.jina.ai, which returns the page's HTML), with a public proxy as a fallback.
+   Only the address of the page is sent. Site notices inside the lyrics ("[thanks for visiting …]") are dropped. */
+'use strict';
+
+const Web = {
+  cache: new Map(),
+  READERS: [
+    url => ({ url: 'https://r.jina.ai/' + url, opts: { headers: { 'X-Return-Format': 'html' } } }),
+    url => ({ url: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url), opts: {} })
+  ],
+  async get(u, opts, ms) {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const tm = setTimeout(() => { try { ctl && ctl.abort(); } catch (e) {} }, ms || 20000);
+    try {
+      const r = await fetch(u, Object.assign({}, opts || {}, ctl ? { signal: ctl.signal } : {}));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.text();
+    } finally { clearTimeout(tm); }
+  },
+  /** The HTML of a page on another site. */
+  async html(url) {
+    if (this.cache.has(url)) return this.cache.get(url);
+    let last = null;
+    for (const mk of this.READERS) {
+      const { url: u, opts } = mk(url);
+      try {
+        const text = await this.get(u, opts, 25000);
+        if (text && text.length > 400 && !/^\s*\{\s*"(code|error)"/.test(text)) { this.cache.set(url, text); if (this.cache.size > 40) this.cache.delete(this.cache.keys().next().value); return text; }
+        last = new Error('empty page');
+      } catch (e) { last = e; }
+    }
+    throw last || new Error('unreachable');
+  },
+  doc(html) { return new DOMParser().parseFromString(html, 'text/html'); }
+};
+
+const ASL = {
+  SITE: 'animesonglyrics.com',
+  BASE: 'https://www.animesonglyrics.com/',
+  /** Lines that belong to the site, not the song. */
+  NOT_LYRIC: /animesonglyrics|アニメソングリリックス|thanks for visiting|ご利用ありがとうございます|correct these lyrics|request ruby|lyrics provided by|lyricfind/i,
+  path(url) { return String(url || '').replace(/^https?:\/\/(www\.)?animesonglyrics\.com\/?/i, '').replace(/[?#].*$/, '').replace(/\/+$/, ''); },
+  url(path) { return this.BASE + this.path(path); },
+  isSongUrl(url) { const p = this.path(url).split('/'); return /animesonglyrics\.com/i.test(url) && p.length === 2 && p[1] !== 'video' && !!p[0]; },
+  clean(s) { return String(s || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim(); },
+  /** The text of one lyric line element, without readings in <rt>, buttons or notices. */
+  lineText(el) {
+    const c = el.cloneNode(true);
+    c.querySelectorAll('rt, rp, script, style, button, .annotation-add-btn, .source').forEach(x => x.remove());
+    return this.clean(c.textContent);
+  },
+  /** One section of lyrics as lines; '' marks a gap between verses. */
+  section(doc, cls) {
+    let els = Array.from(doc.querySelectorAll('.' + cls + '-single-line'));
+    if (!els.length) {                                   // older layout: one block with <br> between lines
+      const box = doc.querySelector('.' + cls + 'lyrics') || doc.querySelector({ kanji: '#tab3', romaji: '#tab1', english: '#tab2' }[cls]);
+      if (!box) return [];
+      const c = box.cloneNode(true);
+      c.querySelectorAll('rt, rp, script, style, button, form, .modal, .correct, .requestlyr, .source').forEach(x => x.remove());
+      c.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+      return this.tidy(c.textContent.split('\n').map(s => this.clean(s)));
+    }
+    return this.tidy(els.map(el => this.lineText(el)));
+  },
+  tidy(lines) {
+    const out = [];
+    for (const l of lines) {
+      if (this.NOT_LYRIC.test(l) || /^\[\s*(hide|show all)\s*\]$/i.test(l)) continue;
+      if (!l) { if (out.length && out[out.length - 1] !== '') out.push(''); continue; }
+      out.push(l);
+    }
+    while (out.length && out[out.length - 1] === '') out.pop();
+    return out;
+  },
+  /** Search: anime and songs. */
+  async search(q) {
+    const doc = Web.doc(await Web.html(this.BASE + 'results?q=' + encodeURIComponent(q)));
+    const panel = Array.from(doc.querySelectorAll('.panel')).find(p => /search results/i.test((p.querySelector('.panel-heading') || {}).textContent || ''));
+    const links = Array.from((panel || doc).querySelectorAll(panel ? 'a[href]' : 'span.homesongs a[href]'));
+    const anime = [], songs = [], seen = new Set();
+    for (const a of links) {
+      const href = a.getAttribute('href') || ''; if (!/animesonglyrics\.com\//i.test(href) && !/^\//.test(href)) continue;
+      const p = this.path(href.replace(/^\//, this.BASE)); if (!p || seen.has(p) || /^(results|anime|artists?|seasons?|genres?|tags?|login|register|privacy|terms|contact|about|submit|request|changetheme)(\/|$)/i.test(p)) continue;
+      seen.add(p);
+      const c = a.cloneNode(true); c.querySelectorAll('.fineprint, img, script').forEach(x => x.remove());      // .fineprint holds a lyrics snippet
+      const parts = p.split('/'), text = this.clean(c.textContent);
+      if (!text) continue;
+      if (parts.length === 1) anime.push({ slug: parts[0], title: text, url: this.url(p) });
+      else if (parts.length === 2 && parts[1] !== 'video') {
+        const strong = c.querySelector('strong'), an = strong ? this.clean(strong.textContent) : '';
+        const m = /^(.*?)\s+:\s+(.*)$/.exec(text), rest = m ? m[2] : text, d = /^(.*?)\s+-\s+(.*)$/.exec(rest);
+        songs.push({ url: this.url(p), anime: an || (m ? m[1] : ''), artist: d ? d[1] : '', title: d ? d[2] : rest, animeSlug: parts[0] });
+      }
+    }
+    // the site also finds songs whose lyrics mention the words: put songs whose title, artist or anime match first
+    const words = this.clean(q).toLowerCase().split(' ').filter(w => w.length > 1);
+    const hits = x => words.filter(w => (x.title + ' ' + x.artist + ' ' + x.anime + ' ' + x.animeSlug).toLowerCase().indexOf(w) !== -1).length;
+    songs.forEach(x => { x.hit = hits(x); });
+    const named = songs.filter(x => x.hit > 0).sort((x, y) => y.hit - x.hit), other = songs.filter(x => !x.hit);
+    return { anime: anime.slice(0, 30), songs: named.slice(0, 60), other: other.slice(0, 12) };
+  },
+  /** An anime's page: its songs. */
+  async anime(slug) {
+    const doc = Web.doc(await Web.html(this.url(slug)));
+    const songs = [], seen = new Set();
+    for (const a of doc.querySelectorAll('a[href]')) {
+      const p = this.path(a.getAttribute('href') || ''), parts = p.split('/');
+      if (parts.length !== 2 || parts[0] !== slug || parts[1] === 'video' || seen.has(p)) continue;
+      seen.add(p);
+      const item = a.closest('.list-group-item') || a;
+      const title = this.clean(a.textContent);
+      const note = this.clean((item !== a ? item.textContent : '').replace(title, ''));
+      if (title) songs.push({ url: this.url(p), title, note });
+    }
+    const h1 = doc.querySelector('h1'), h2 = doc.querySelector('h2');
+    return { slug, title: h1 ? this.clean(h1.textContent).replace(/\s*Lyrics$/i, '') : slug, titleEn: h2 ? this.clean(h2.textContent).replace(/\s*Lyrics$/i, '') : '', songs };
+  },
+  /** A song page: lyrics in three forms, the music video, and what it is. */
+  async song(url) {
+    url = this.url(url);
+    const html = await Web.html(url);
+    const doc = Web.doc(html);
+    const h1 = this.clean((doc.querySelector('h1') || {}).textContent).replace(/\s*Lyrics$/i, '');
+    const d = /^(.*?)\s+-\s+(.*)$/.exec(h1);
+    const h2 = this.clean((doc.querySelector('h2') || {}).textContent).replace(/\s*Lyrics$/i, '');
+    const theme = (/(Opening|Ending|Insert Song|Insert|Image Song|Character Song|Theme Song|OST)(\s*\d+)?\s*$/i.exec(h2) || [''])[0].trim();
+    const docTitle = this.clean((doc.querySelector('title') || {}).textContent);
+    const animeName = this.clean((docTitle.split('|')[1] || h2).replace(/\s*Lyrics$/i, '').replace(theme, ''));
+    let yt = null;
+    const fr = doc.querySelector('iframe.youtube-player, iframe[src*="youtube.com/embed/"]');
+    const fm = fr ? /embed\/([\w-]{11})/.exec(fr.getAttribute('src') || '') : null;
+    const ym = /yapi\(\s*["']([\w-]{11})["']\s*,\s*["']([^"']*)["']\s*,\s*(\d+)/.exec(html) || /youtube(?:-nocookie)?\.com\/embed\/([\w-]{11})/.exec(html);
+    if (fm) yt = { id: fm[1], start: 0 }; else if (ym) yt = { id: ym[1], start: ym[3] ? +ym[3] : 0 };
+    const kanji = this.section(doc, 'kanji'), romaji = this.section(doc, 'romaji'), english = this.section(doc, 'english');
+    return { url, site: this.SITE, artist: d ? d[1] : '', title: d ? d[2] : h1, anime: animeName, theme, yt, kanji, romaji, english,
+      hasKanji: kanji.filter(Boolean).length > 0, hasEnglish: english.filter(Boolean).length > 0 };
+  }
+};
+
+/* Lining up the site's English with Japanese lines. The English follows the site's romaji line for line, so each
+   Japanese line is matched to romaji lines by sound (its reading, in romaji), allowing one Japanese line to cover
+   two or three romaji lines and the other way round. */
+const Align = {
+  norm(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z]/g, '').replace(/ou/g, 'o').replace(/([aeiou])\1+/g, '$1')
+      .replace(/tsu/g, 'tu').replace(/shi/g, 'si').replace(/chi/g, 'ti').replace(/ji/g, 'zi').replace(/fu/g, 'hu').replace(/sh/g, 'sy').replace(/ch/g, 'ty').replace(/j/g, 'zy')
+      .replace(/wo/g, 'o').replace(/wa/g, 'ha').replace(/(.)\1/g, '$1');
+  },
+  sim(a, b) {
+    if (!a || !b) return 0; if (a === b) return 1;
+    const grams = s => { const m = new Map(); for (let i = 0; i < s.length - 1; i++) { const k = s.substr(i, 2); m.set(k, (m.get(k) || 0) + 1); } return m; };
+    const A = grams(a), B = grams(b); let both = 0, na = 0, nb = 0;
+    for (const v of A.values()) na += v; for (const v of B.values()) nb += v;
+    for (const [k, v] of A) if (B.has(k)) both += Math.min(v, B.get(k));
+    const dice = na + nb ? 2 * both / (na + nb) : 0;
+    const lenFit = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    return dice * (0.6 + 0.4 * lenFit);
+  },
+  /** The sound of a Japanese line in romaji. */
+  romajiOf(jp) {
+    let kana = '';
+    try { if (typeof Analyzer !== 'undefined' && Offline.ready()) kana = (Analyzer.line(jp, 0).t || []).map(t => t.r || t.s).join(''); } catch (e) {}
+    if (!kana) kana = jp;
+    return JP.toRomaji(JP.toHira(kana));
+  },
+  /** For each Japanese line, the romaji line numbers it matches ([] when nothing fits). */
+  match(jaLines, roLines) {
+    const J = jaLines.map(l => this.norm(this.romajiOf(l))), R = roLines.map(l => this.norm(l));
+    const n = J.length, m = R.length, NEG = -1e9;
+    const S = Array.from({ length: n + 1 }, () => new Float64Array(m + 1).fill(NEG)), from = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(null));
+    S[0][0] = 0;
+    for (let i = 0; i <= n; i++) for (let j = 0; j <= m; j++) {
+      const cur = S[i][j]; if (cur <= NEG / 2) continue;
+      const set = (a, b, v, how) => { if (v > S[a][b]) { S[a][b] = v; from[a][b] = how; } };
+      if (i < n) set(i + 1, j, cur - 0.35, [i, j, 1, 0]);          // a Japanese line with no translation
+      if (j < m) set(i, j + 1, cur - 0.12, [i, j, 0, 1]);          // a romaji line nothing matches
+      for (let k = 1; k <= 2 && i + k <= n; k++) for (let l = 1; l <= 3 && j + l <= m; l++) {
+        if (k === 2 && l === 3) continue;
+        const s = this.sim(J.slice(i, i + k).join(''), R.slice(j, j + l).join(''));
+        if (s < 0.34) continue;
+        set(i + k, j + l, cur + s * (k + l) - 0.12 * (k + l - 2), [i, j, k, l]);
+      }
+    }
+    const out = jaLines.map(() => []);
+    let i = n, j = m;
+    while (i > 0 || j > 0) {
+      const f = from[i][j]; if (!f) break;
+      const [pi, pj, k, l] = f;
+      if (k && l) for (let a = pi; a < pi + k; a++) for (let b = pj; b < pj + l; b++) out[a].push(b);
+      i = pi; j = pj;
+    }
+    return out;
+  },
+  /** English for each Japanese line, from a song page (romaji and English that share their line structure). */
+  english(jaLines, song) {
+    const ro = (song.romaji || []).filter(Boolean), en = (song.english || []).filter(Boolean);
+    if (!ro.length || !en.length) return jaLines.map(() => '');
+    if (ro.length !== en.length) {                             // fall back to verse by verse, line by line
+      const out = jaLines.map(() => '');
+      if (jaLines.length === en.length) return en.slice();
+      return out;
+    }
+    const hit = this.match(jaLines, ro);
+    return hit.map(js => js.length ? uniq(js).sort((a, b) => a - b).map(j => en[j]).join(' / ') : '');
   }
 };
 
@@ -15126,14 +15379,138 @@ const AI = {
 };
 
 /* ===== 65-player.js ===== */
-/* ---------- 65-player: plays the learner's own audio or video file, one line at a time ---------- */
+/* ---------- 65-player: plays the learner's own audio or video file, one line at a time ----------
+   Player.el is a stand-in for a <video> element. Behind it is either the real <video> (the learner's files) or a
+   YouTube player (music videos found online), so the rest of the game drives both the same way. */
 'use strict';
+
+const MEDIA_EVENTS = ['play', 'playing', 'pause', 'ended', 'timeupdate', 'loadedmetadata', 'durationchange', 'error', 'ratechange', 'seeked', 'waiting'];
+class MediaFacade extends EventTarget {
+  constructor(video) { super(); this.b = video; this._hook(video); }
+  _hook(b) {
+    if (b._ktnHooked) return; b._ktnHooked = true;
+    MEDIA_EVENTS.forEach(t => b.addEventListener(t, () => { if (this.b === b) this.dispatchEvent(new Event(t)); }));
+  }
+  /** Switch what plays. The new player takes the old one's place on screen. */
+  setBackend(b) {
+    if (this.b === b) return;
+    const old = this.b;
+    try { old.pause(); } catch (e) {}
+    this._hook(b);
+    this.b = b;
+    const on = old.node || old, nn = b.node || b;
+    if (on.parentNode && on.parentNode !== nn.parentNode) { on.parentNode.replaceChild(nn, on); const hold = $('#player-holder'); if (hold) hold.appendChild(on); }
+    else if (!nn.parentNode) { const hold = $('#player-holder'); if (hold) hold.appendChild(nn); }
+  }
+  get node() { return this.b.node || this.b; }
+  get isYouTube() { return this.b instanceof YTMedia; }
+  get currentTime() { return this.b.currentTime; } set currentTime(t) { this.b.currentTime = t; }
+  get paused() { return this.b.paused; }
+  get ended() { return this.b.ended; }
+  get duration() { return this.b.duration; }
+  get readyState() { return this.b.readyState; }
+  get videoWidth() { return this.b.videoWidth || 0; }
+  get videoHeight() { return this.b.videoHeight || 0; }
+  get playbackRate() { return this.b.playbackRate; } set playbackRate(r) { this.b.playbackRate = r; }
+  get controls() { return !!this.b.controls; } set controls(v) { this.b.controls = v; }
+  get src() { return this.b.src; } set src(v) { this.b.src = v; }
+  get error() { return this.b.error || null; }
+  play() { return this.b.play(); }
+  pause() { return this.b.pause(); }
+  load() { try { return this.b.load(); } catch (e) {} }
+  removeAttribute(n) { if (this.b.removeAttribute) this.b.removeAttribute(n); }
+}
+
+/* A YouTube video behind the same face as a <video> element, using YouTube's IFrame player. Its clock is read
+   every 200 ms and filled in between, so karaoke highlighting stays smooth. */
+class YTMedia extends EventTarget {
+  constructor() {
+    super();
+    this.node = h('div.yt-wrap', h('div.yt-frame'));
+    this.p = null; this.vid = ''; this._ready = false; this._state = -1; this._t = 0; this._at = 0; this._dur = NaN; this._rate = 1;
+    this._poll = 0; this._queued = null; this._seek = null; this.controls = false; this.error = null;
+  }
+  static api() {
+    if (YTMedia._api) return YTMedia._api;
+    YTMedia._api = new Promise((res, rej) => {
+      if (window.YT && window.YT.Player) { res(window.YT); return; }
+      const prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => { try { if (prev) prev(); } catch (e) {} res(window.YT); };
+      const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; s.async = true;
+      s.onerror = () => { YTMedia._api = null; rej(new Error('YouTube could not be reached')); };
+      document.head.appendChild(s);
+      setTimeout(() => { if (!(window.YT && window.YT.Player)) { YTMedia._api = null; rej(new Error('YouTube did not answer')); } }, 20000);
+    });
+    return YTMedia._api;
+  }
+  /** Load a video by its YouTube id. (load() itself does nothing, like a media element that is already loading.) */
+  async open(vid, start) {
+    if (this.vid === vid && this.p) return;
+    this.vid = vid; this._ready = false; this._state = -1; this._t = start || 0; this._dur = NaN; this.error = null;
+    try {
+      const YT = await YTMedia.api();
+      if (this.vid !== vid) return;
+      if (!this.p) {
+        const vars = { playsinline: 1, rel: 0, modestbranding: 1, controls: 0, disablekb: 1, iv_load_policy: 3, fs: 0, cc_load_policy: 0 };
+        if (/^https?:$/.test(location.protocol)) vars.origin = location.origin;
+        this.p = new YT.Player(this.node.querySelector('.yt-frame'), { videoId: vid, width: '100%', height: '100%', playerVars: vars,
+          events: { onReady: () => this._onReady(), onStateChange: e => this._onState(e.data), onError: e => this._onError(e.data),
+            onPlaybackRateChange: e => { this._rate = e.data || this._rate; this.dispatchEvent(new Event('ratechange')); } } });
+      } else { this._ready = false; this.p.cueVideoById({ videoId: vid, startSeconds: start || 0 }); }
+    } catch (e) { this.error = { code: 'api', message: e.message }; this.dispatchEvent(new Event('error')); }
+  }
+  _onReady() {
+    this._ready = true;
+    try { this._dur = this.p.getDuration() || NaN; } catch (e) {}
+    if (this._seek != null) { try { this.p.seekTo(this._seek, true); } catch (e) {} this._seek = null; }
+    this.playbackRate = this._rate;
+    this.dispatchEvent(new Event('loadedmetadata')); this.dispatchEvent(new Event('durationchange'));
+    const q = this._queued; this._queued = null; if (q) q();
+  }
+  _onState(s) {
+    this._state = s; this._sync();
+    try { const d = this.p.getDuration(); if (d && d !== this._dur) { this._dur = d; this.dispatchEvent(new Event('durationchange')); } } catch (e) {}
+    if (s === 5 && !this._ready) this._onReady();
+    if (s === 1) { this._startPoll(); this.dispatchEvent(new Event('play')); this.dispatchEvent(new Event('playing')); }
+    else if (s === 2) { this._stopPoll(); this.dispatchEvent(new Event('pause')); }
+    else if (s === 0) { this._stopPoll(); this.dispatchEvent(new Event('pause')); this.dispatchEvent(new Event('ended')); }
+  }
+  _onError(code) { this.error = { code, message: code === 101 || code === 150 || code === 153 ? 'embedding not allowed' : 'video unavailable' }; this._stopPoll(); this.dispatchEvent(new Event('error')); }
+  _sync() { try { if (this.p && this.p.getCurrentTime) { this._t = this.p.getCurrentTime() || 0; this._at = performance.now(); } } catch (e) {} }
+  _startPoll() { this._stopPoll(); this._poll = setInterval(() => { this._sync(); this.dispatchEvent(new Event('timeupdate')); }, 200); }
+  _stopPoll() { if (this._poll) clearInterval(this._poll); this._poll = 0; }
+  get currentTime() { return this._state === 1 ? this._t + (performance.now() - this._at) / 1000 * this._rate : this._t; }
+  set currentTime(t) { this._t = t; this._at = performance.now(); if (this.p && this._ready) { try { this.p.seekTo(t, true); } catch (e) {} } else this._seek = t; this.dispatchEvent(new Event('seeked')); }
+  get paused() { return this._state !== 1 && this._state !== 3; }
+  get ended() { return this._state === 0; }
+  get duration() { return this._dur; }
+  get readyState() { return this._ready ? 4 : 0; }
+  get playbackRate() { return this._rate; }
+  set playbackRate(r) {
+    r = r || 1; this._rate = r;
+    if (this.p && this._ready && this.p.setPlaybackRate) {
+      let av = [r]; try { av = this.p.getAvailablePlaybackRates() || [r]; } catch (e) {}
+      const best = av.reduce((a, b) => Math.abs(b - r) < Math.abs(a - r) ? b : a, 1);
+      try { this.p.setPlaybackRate(best); } catch (e) {}
+      this._rate = best;
+    }
+  }
+  play() {
+    if (this.p && this._ready) { this.p.playVideo(); return Promise.resolve(); }
+    return new Promise(res => { this._queued = () => { try { this.p.playVideo(); } catch (e) {} res(); }; });
+  }
+  pause() { if (this.p && this._ready) { try { this.p.pauseVideo(); } catch (e) {} } this._queued = null; }
+  load() {}
+  get src() { return this.vid ? 'youtube:' + this.vid : ''; } set src(v) {}
+  removeAttribute() {}
+}
 
 const Player = {
   el: null, cur: null, files: new Map(), broken: new Set(), _seg: null, _raf: 0,
 
   init() {
-    this.el = h('video.player-el', { playsInline: true, preload: 'metadata' });
+    this.video = h('video.player-el', { playsInline: true, preload: 'metadata' });
+    this.el = new MediaFacade(this.video);
     this.el.addEventListener('error', () => {
       if (!this.cur) return;
       this.broken.add(this.cur);
@@ -15144,8 +15521,17 @@ const Player = {
     this.el.addEventListener('ended', () => this._check());
     this.el.addEventListener('play', () => Bus.emit('player', 'play'));
     this.el.addEventListener('pause', () => Bus.emit('player', 'pause'));
-    $('#player-holder').appendChild(this.el);
+    $('#player-holder').appendChild(this.video);
   },
+  /** A YouTube music video for a lesson (found online). Plays in the web and phone versions. */
+  attachYT(id, videoId, name, start) {
+    this.files.set(id, { yt: videoId, ytStart: start || 0, url: '', name: name || 'YouTube video', size: 0, isVideo: true });
+    this.broken.delete(id);
+    if (this.cur === id) this.cur = null;
+    Bus.emit('player-files', id);
+  },
+  isYouTube(id) { const f = this.files.get(id); return !!(f && f.yt); },
+  ytError() { return this.yt && this.yt.error ? this.yt.error : null; },
   /** Attach a file the learner picked. Nothing is uploaded: the browser plays it from disk. */
   attach(id, file) {
     const old = this.files.get(id);
@@ -15169,7 +15555,17 @@ const Player = {
   use(id) {
     const f = this.files.get(id);
     if (!f) return false;
-    if (this.cur !== id) { this._endSeg(true); this.cur = id; this.el.src = f.url; try { this.el.load(); } catch (e) {} }
+    if (this.cur !== id) {
+      this._endSeg(true); this.cur = id;
+      if (f.yt) {
+        if (!this.yt) this.yt = new YTMedia();
+        this.el.setBackend(this.yt);
+        this.yt.open(f.yt, f.ytStart || 0);
+      } else {
+        this.el.setBackend(this.video);
+        this.video.src = f.url; try { this.video.load(); } catch (e) {}
+      }
+    }
     return true;
   },
   isPlaying() { return !!this.el && !this.el.paused && !this.el.ended; },
@@ -15248,7 +15644,7 @@ const Player = {
   async ensure(m) {
     if (!m) return false;
     if (this.has(m.id)) return true;
-    if (!m.fileName) return false;
+    if (!m.fileName) { if (m.yt) { this.attachYT(m.id, m.yt, m.title, m.ytStart); return true; } return false; }
     if (this._finding && this._finding.id === m.id) return this._finding.p;
     const p = (async () => {
       const e = Folder.find(m);
@@ -15263,13 +15659,15 @@ const Player = {
         const rel = (m.filePath || m.fileName).split('/').map(encodeURIComponent).join('/');
         for (const up of ['../', '', '../../']) { if (await this.probe(up + rel)) { this.attachUrl(m.id, up + rel, m.fileName); return true; } }
       }
-      return this.restore(m.id);
+      if (await this.restore(m.id)) return true;
+      if (m.yt) { this.attachYT(m.id, m.yt, m.title, m.ytStart); return true; }          // no file of its own: its music video
+      return false;
     })();
     this._finding = { id: m.id, p };
     try { return await p; } finally { if (this._finding && this._finding.p === p) this._finding = null; }
   },
   /** Put the video element into a visible slot (study screen) or back into hiding. */
-  dock(slot) { (slot || $('#player-holder')).appendChild(this.el); }
+  dock(slot) { (slot || $('#player-holder')).appendChild(this.el.node); }
 };
 
 /* ===== 70-ui-core.js ===== */
@@ -15833,6 +16231,14 @@ Views.library = {
     const page = h('div.page');
     page.appendChild(pageHead('教材', 'Library', 'Each song, scene or episode becomes a path of short stages with a test at the end.',
       btn('Add media', { cls: 'primary', icon: 'plus', onclick: () => App.go('import') })));
+    if (Views.find.available()) {
+      const q = h('input#lib-find', { type: 'search', placeholder: 'Anime or song, e.g. Steel Ball Run', autocomplete: 'off', enterkeyhint: 'search', 'aria-label': 'Find an anime song' });
+      const go = () => App.go('find', { q: q.value.trim() });
+      q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
+      page.appendChild(h('section.find-card', h('div', h('h2', duo('探す', 'Find any anime song')),
+        h('p.sub', 'Japanese lyrics with an English translation and the music video, from animesonglyrics.com.')),
+        h('div.find-form', q, btn('Search', { cls: 'primary', icon: 'next', onclick: go }))));
+    }
     const folderCard = this.folderCard();
     if (folderCard) page.appendChild(folderCard);
     page.appendChild(this.packBar());
@@ -16165,7 +16571,12 @@ Views.media = {
             h('p', allStudied ? 'Questions from every stage, listening without text, and one answer in your own words.' : 'Opens when every stage has been studied.'),
             m.final && m.final.best != null ? h('p.sub', 'Best ' + m.final.best + '% · ' + verdictFor(m.final.best).jp) : null),
           h('div.node-act', btn('Take test', { cls: allStudied ? 'primary' : '', disabled: !allStudied, onclick: () => App.go('test', { id: m.id, n: 'final' }) }))))));
+    const nEn = m.lines.filter(l => l.en).length;
     page.appendChild(h('section.tools', h('h2', duo('道具', 'Tools')),
+      m.sample || !Views.find.available() ? null : h('div.tool-row',
+        h('div', h('h3', duo('英訳', 'English translation')), h('p.sub', nEn ? nEn + ' of ' + plural(m.lines.length, 'line') + ' have a translation' + (m.lines.some(l => l.enSrc === ASL.SITE) ? ' from animesonglyrics.com' : '') + '.'
+          : 'Find this song on animesonglyrics.com and match its English translation to each of your lines (and its music video, when the lesson has no file).')),
+        btn(nEn ? 'Find again' : 'Find it', { icon: 'next', onclick: () => App.go('find', { q: [m.title, m.artist].filter(Boolean).join(' '), attach: m.id }) })),
       m.sample ? null : h('div.tool-row',
         h('div', h('h3', 'Lesson pack'), h('p.sub', 'Save this lesson with its analysis as one file (' + Packs.fileName(m) + '). Open it in the other copy of the game, or on another computer. Your progress is not included.')),
         btn('Export pack', { icon: 'download', onclick: () => Packs.exportOne(m) })),
@@ -16814,6 +17225,7 @@ const TH_PLAY_KINDS = [
   ['catch', 'Catch the word', 'One word is missing. Listen for it and pick it.'],
   ['particle', 'Particles', 'Which particle glues the line together?'],
   ['meaning', 'Meaning', 'What does the marked word mean here?'],
+  ['sense', 'Line meaning', 'Which translation matches the line you hear?'],
   ['reading', 'Reading', 'How is the marked kanji word read? Listen for it.'],
   ['build', 'Rebuild the line', 'Put the pieces back in the order you heard them.'],
   ['echo', 'Echo', 'Hear the line, then say it back with the same rhythm.']
@@ -16867,7 +17279,7 @@ Views.theater = {
     if (!m) { App.go('library'); return; }
     const mode = params.mode || m.lastMode || 'watch';
     const T = this.T = { m, mode, docs: m.stages.map(() => null), focus: -1, cur: -1, rate: 1, loopLine: false,
-      text: (Game.p.settings.thText) || 'furi', learn: { li: params.li != null ? Number(params.li) : null, revealed: new Set(), skip: new Set() },
+      text: (Game.p.settings.thText) || 'furi', learn: { li: params.li != null ? Number(params.li) : null, revealed: new Set(), skip: new Set(), trShown: new Set() },
       play: null, im: 0, imXp: 0, lastTick: 0, kara: null, starts: [], offs: [], veilOpen: new Set(), drawnFocus: -9 };
     m.opened = now(); Game.p.lastMedia = m.id; Game.touch();
     const page = h('div.page.theater.mode-' + mode);
@@ -16888,10 +17300,11 @@ Views.theater = {
     root.appendChild(page);
     this.T.offs.push(Bus.on('offline', st => { if (this.T === T && st === 'ready') this.loadDocs(); else if (this.T === T) this.drawPanel(); }));
     this.T.offs.push(Bus.on('player', () => { if (this.T === T) this.drawCtl(); }));
+    this.T.offs.push(Bus.on('player-error', id => { if (this.T === T && id === T.m.id) { this.drawScreen(); this.drawCtl(); } }));
     this.T.offs.push(Bus.on('folder', () => { if (this.T === T && !Player.has(m.id)) this.attachMedia(); }));
     this._ended = () => { if (this.T === T) this.onEnded(); };
     Player.el.addEventListener('ended', this._ended);
-    this._meta = () => { if (this.T === T) this.drawTime(); };
+    this._meta = () => { if (this.T === T) { this.drawTime(); if (T.mode === 'watch' && this.timingDoubt() && !T._doubtShown) { T._doubtShown = true; this.drawPanel(); } } };
     Player.el.addEventListener('durationchange', this._meta);
     this.key = e => this.onKey(e);
     document.addEventListener('keydown', this.key);
@@ -17014,8 +17427,16 @@ Views.theater = {
       m.fileName = f.name; m.fileSize = f.size; m.isVideo = Player.isVideo(m.id); Lib.saveContent(m);
       this.attachMedia();
     } });
-    const kids = [h('p.th-np-title', m.sample ? 'This sample has no recording' : Player.broken.has(m.id) ? 'This browser cannot play that file' : m.fileName ? 'Where is “' + m.fileName + '”?' : 'No audio or video attached')];
+    const ytBroken = Player.broken.has(m.id) && Player.isYouTube(m.id);
+    const kids = [h('p.th-np-title', m.sample ? 'This sample has no recording' : ytBroken ? 'The music video cannot play here' : Player.broken.has(m.id) ? 'This browser cannot play that file' : m.fileName ? 'Where is “' + m.fileName + '”?' : 'No audio or video attached')];
     if (m.sample) kids.push(h('p.sub', 'A synthetic voice reads each line. Your own songs and episodes play right here.'));
+    else if (ytBroken) {
+      const err = Player.ytError() || {}, disk = typeof location !== 'undefined' && location.protocol === 'file:';
+      kids.push(h('p.sub', disk ? 'YouTube videos do not play in the copy opened from your computer\u2019s disk. They play in the web and phone version' + (BUILD.web ? ' (' + BUILD.web + ')' : '') + '.'
+        : err.message === 'embedding not allowed' ? 'Its owner only lets it play on YouTube itself.' : err.code === 'api' ? 'YouTube could not be reached. Check the connection and open the lesson again.' : 'YouTube says the video is unavailable.'));
+      kids.push(h('div.btn-row.center', h('a.btn.ghost', { href: 'https://www.youtube.com/watch?v=' + m.yt, target: '_blank', rel: 'noopener' }, 'Open it on YouTube'),
+        h('label.btn.primary', { for: pickId }, icon('upload', 16), h('span', 'Use my own file')), input));
+    }
     else if (Player.broken.has(m.id)) kids.push(h('p.sub', 'MP4 (H.264 with AAC), WebM, MP3, M4A and FLAC play in every browser.'));
     else {
       if (m.fileName && Folder.handle && Folder.perm !== 'granted') kids.push(btn('Reconnect “' + Folder.name + '”', { cls: 'primary', icon: 'sync', onclick: async () => { if (await Folder.reconnect()) this.attachMedia(); } }));
@@ -17255,6 +17676,11 @@ Views.theater = {
   },
 
   /* ----- Watch ----- */
+  /** Synced lyrics found online were timed to the album track; a music video can run longer (an intro, a story). */
+  timingDoubt() {
+    const m = this.T.m, d = Player.duration();
+    return !!(m.lrcDur && Player.isYouTube(m.id) && d > 0 && Math.abs(d - m.lrcDur) > 8);
+  },
   watchPanel() {
     const T = this.T, m = T.m, w = m.watch || { n: 0, hist: [] };
     const d = Game.day(), todayMin = Math.floor(((d.im || 0) + T.im) / 60), here = Math.floor(((m.imSec || 0) + T.im) / 60);
@@ -17271,6 +17697,8 @@ Views.theater = {
       h('h2', duo('観る', 'Watch')),
       h('p.sub', 'Play it through the way a fan would. Tap any word on the current line to look it up: the video waits for you.'),
       untimed && this.hasMedia() ? this.syncCard() : null,
+      !untimed && this.timingDoubt() ? h('div.notice', h('b', 'The timing may be off. '), 'The lyrics were timed to the ' + fmtClock(m.lrcDur) + ' album track, but this video runs ' + fmtClock(Player.duration()) + '. If the lines run early or late, tap along once to time them to the video.',
+        h('div.btn-row', btn('Tap along to fix it', { cls: 'small primary', icon: 'sync', onclick: () => App.go('sync', { id: m.id }) }))) : null,
       h('div.th-stats',
         h('div', h('b', todayMin + ' min'), h('span', 'immersion today')),
         h('div', h('b', here + ' min'), h('span', 'with this lesson')),
@@ -17323,12 +17751,15 @@ Views.theater = {
     }
     // what it means
     const mean = h('section.block.th-meaning');
-    if (A.en) mean.appendChild(h('p.en', A.en));
+    const fromPage = !!(A.en && A.enSrc), shown = !fromPage || T.learn.trShown.has(li) || !!(A.my && A.my.trim());
+    if (A.en && shown) mean.appendChild(h('p.en', A.en, fromPage ? h('span.en-src', 'translation: ' + A.enSrc) : null));
     if (A.lit) mean.appendChild(h('p.lit', h('span.tag', 'word for word'), A.lit));
-    const my = h('textarea.th-my', { rows: 2, placeholder: A.en ? 'Your own translation (optional)' : 'Write what you think it means. Putting it in your own words is how it sticks.', lang: 'en' });
+    const my = h('textarea.th-my', { rows: 2, placeholder: A.en && shown ? 'Your own translation (optional)' : 'Write what you think it means. Putting it in your own words is how it sticks.', lang: 'en' });
     my.value = A.my || '';
     my.addEventListener('input', debounce(() => this.saveMy(li, my.value), 700));
     mean.appendChild(my);
+    if (A.en && !shown) mean.appendChild(h('div.btn-row', btn('Compare with a translation', { cls: 'small ghost', icon: 'eye', onclick: () => { if (my.value.trim()) this.saveMy(li, my.value); T.learn.trShown.add(li); this.drawPanel(); } }),
+      h('span.fine', 'Try your own first, then compare.')));
     const reg = A.r && REGISTER_NOTE[A.r] ? chip(REGISTER_NOTE[A.r], 'reg reg-' + A.r) : null;
     kids.push(h('section.block', h('h3', duo('意味', 'Meaning'), reg), mean));
     if (AI.available() && A.auto) kids.push(this.deepenBlock(n));
@@ -17514,7 +17945,9 @@ Views.theater = {
     const rangeSeg = h('div.th-ranges', m.stages.map((st, n) => h('button.th-range' + (o.range === n ? '.on' : ''), { type: 'button', disabled: !ready(n), onclick: () => { o.range = n; this.drawPanel(); } },
       h('b', String(n + 1)), st.play && st.play.grade ? h('span.grade.g-' + st.play.grade, st.play.grade) : h('span.fine', '–'))),
       h('button.th-range.all' + (o.range === 'all' ? '.on' : ''), { type: 'button', disabled: !ready('all'), onclick: () => { o.range = 'all'; this.drawPanel(); } }, h('b', 'All'), m.playAll && m.playAll.grade ? h('span.grade.g-' + m.playAll.grade, m.playAll.grade) : h('span.fine', 'song')));
-    const kinds = h('div.th-kinds', TH_PLAY_KINDS.map(([id, name, d]) => {
+    const hasTr = this.translated() >= 4;
+    if (o.kind === 'sense' && !hasTr) o.kind = 'mix';
+    const kinds = h('div.th-kinds', TH_PLAY_KINDS.filter(([id]) => id !== 'sense' || hasTr).map(([id, name, d]) => {
       const off = waitOnly(id) && o.pace !== 'wait';
       return h('button.th-kind' + (o.kind === id ? '.on' : ''), { type: 'button', disabled: off, title: off ? 'Needs the “Wait for me” pace' : '', onclick: () => { o.kind = id; this.drawPanel(); } }, h('b', name), h('span', d));
     }));
@@ -17594,7 +18027,7 @@ Views.theater = {
     const T = this.T, P = T.play, A = this.A(li); if (!A || !A.t.length) return null;
     let kinds;
     if (P.o.kind === 'mix') {
-      kinds = shuffle(['catch', 'particle', 'meaning', 'reading'].concat(P.live ? ['catch'] : ['build', 'catch'], !P.live && P.k % 4 === 3 ? ['echo'] : []));
+      kinds = shuffle(['catch', 'particle', 'meaning', 'reading'].concat(P.live ? ['catch'] : ['build', 'catch'], !P.live && P.k % 4 === 3 ? ['echo'] : [], this.translated() >= 4 ? ['sense', 'sense'] : []));
       kinds.sort((x, y) => (x === P.lastType) - (y === P.lastType));
       if (!P.live && P.k % 4 === 3) kinds.unshift('echo');                 // every fourth line in Wait mode: say it back
     } else kinds = [(P.o.kind === 'build' || P.o.kind === 'echo') && P.live ? 'catch' : P.o.kind];
@@ -17631,6 +18064,25 @@ Views.theater = {
     const tgt = pick(pool, 1)[0];
     const opts = shuffle([tgt.t.s].concat(PARTICLE_FOILS[tgt.t.s].slice(0, 3)));
     return { type: 'particle', li, k: tgt.k, word: tgt.t, opts: opts.map(s => ({ s })), ans: opts.indexOf(tgt.t.s) };
+  },
+  /** How many lines have an English translation (from Claude or the lyrics page). */
+  translated() {
+    const T = this.T; if (!T) return 0;
+    if (T._trAt === T.docs) return T._tr;
+    let n = 0; for (const d of T.docs) if (d) for (const A of d.lines) if (A.en) n++;
+    T._tr = n; T._trAt = T.docs; return n;
+  },
+  /** Line meaning: the line's translation among translations of other lines. */
+  q_sense(li, A) {
+    if (!A.en || A.en.length > 160) return null;
+    const right = A.en, used = new Set([right.toLowerCase()]), foils = [];
+    const near = [];
+    for (const d of this.T.docs) if (d) for (const B of d.lines) if (B.en && B.i !== li && B.en.length <= 160 && !used.has(B.en.toLowerCase())) near.push(B);
+    near.sort((a, b) => Math.abs(a.i - li) - Math.abs(b.i - li));
+    for (const B of shuffle(near.slice(0, 8)).concat(near.slice(8))) { if (foils.length >= 3) break; if (!used.has(B.en.toLowerCase())) { used.add(B.en.toLowerCase()); foils.push(B.en); } }
+    if (foils.length < 2) return null;
+    const opts = shuffle([right].concat(foils));
+    return { type: 'sense', li, opts: opts.map(g => ({ g })), ans: opts.indexOf(right) };
   },
   q_meaning(li, A) {
     const first = g => String(g || '').split(/; | \(with/)[0].replace(/\s*\(.*?\)\s*$/, '').trim();
@@ -17706,7 +18158,7 @@ Views.theater = {
     if (P.phase === 'done') { const g = P.grade || 'C'; mount(box, h('div.th-done', h('div.big-grade.g-' + g, g), h('p', P.right + ' of ' + (P.right + P.wrong) + ' right · best combo ×' + P.maxCombo))); return; }
     const q = P.q; if (!q) return;
     const L = T.m.lines[q.li], A = this.A(q.li);
-    const prompt = { catch: 'Which word fills the gap?', particle: 'Which particle fills the gap?', meaning: 'What does the marked word mean here?', reading: 'How is the marked word read?',
+    const prompt = { catch: 'Which word fills the gap?', particle: 'Which particle fills the gap?', meaning: 'What does the marked word mean here?', reading: 'How is the marked word read?', sense: 'What does this line mean?',
       build: 'Tap the pieces in the order you hear them.', echo: q.done ? 'Your echo' : 'Listen, then say the line back' }[q.type];
     const kids = [h('p.th-q-prompt', prompt)];
     if (q.type === 'build') {
@@ -17715,7 +18167,7 @@ Views.theater = {
     } else if (q.type === 'echo') {
       kids.push(rubyLine(L.jp, A.t, { cls: 'th-jp' }));
     } else {
-      const opt = q.type === 'meaning' || q.done ? { hi: q.k } : q.type === 'reading' ? { hi: q.k, furi: 'none' } : { blank: q.k };
+      const opt = q.type === 'sense' ? {} : q.type === 'meaning' || q.done ? { hi: q.k } : q.type === 'reading' ? { hi: q.k, furi: 'none' } : { blank: q.k };
       kids.push(rubyLine(L.jp, A.t, Object.assign({ cls: 'th-jp' }, opt)));
     }
     if (P.timed && !q.done) kids.push(h('div#th-timer.th-timer' + (P.live ? '' : '.relaxed'), h('i')));
@@ -17728,7 +18180,7 @@ Views.theater = {
     } else {
       kids.push(h('div.th-opts-grid.qt-' + q.type, q.opts.map((o, i) => {
         const cls = q.done ? (i === q.ans ? '.right' : i === q.pick ? '.wrong' : '.dim') : '';
-        const face = q.type === 'meaning' ? h('span.opt-g', o.g) : (q.type === 'particle' || q.type === 'reading') ? h('span.opt-p' + (q.type === 'reading' ? '.rd' : ''), { lang: 'ja' }, o.s) : rubyWord({ s: o.s, r: o.r }, 'opt-w');
+        const face = q.type === 'meaning' || q.type === 'sense' ? h('span.opt-g', o.g) : (q.type === 'particle' || q.type === 'reading') ? h('span.opt-p' + (q.type === 'reading' ? '.rd' : ''), { lang: 'ja' }, o.s) : rubyWord({ s: o.s, r: o.r }, 'opt-w');
         return h('button.th-opt' + cls, { type: 'button', disabled: !!q.done, onclick: () => this.playAnswer(i) }, h('span.opt-key', String(i + 1)), face);
       })));
     }
@@ -18252,6 +18704,166 @@ Views.result = {
       context: 'Context: read the “Beneath the words” notes again. Ask yourself who is speaking to whom, and how politely.'
     };
     return weak.length ? h('ul.tips', weak.map(id => h('li', tips[id]))) : null;
+  }
+};
+
+/* ===== 77-ui-find.js ===== */
+/* ---------- 77-ui-find: look up any anime song and turn it into a lesson ----------
+   Like browsing a song quiz's library: search by anime or song on animesonglyrics.com, open an anime to see its
+   openings and endings, pick a song. Kotonoha takes the Japanese lyrics, the site's English translation (matched
+   to each line by sound) and the music video, looks for synced timing on LRCLIB, and builds the lesson.
+   With attach set, the chosen song's translation is added to an existing lesson instead. */
+'use strict';
+
+Views.find = {
+  tab: 'library', F: null,
+  available() { return BUILD.local && typeof DOMParser !== 'undefined'; },
+  render(root, params) {
+    params = params || {};
+    const page = h('div.page.narrow.find-page'); root.appendChild(page); this.page = page;
+    if (!this.F || params.q !== undefined && params.q !== this.F.q0 || (params.attach || null) !== this.F.attach) {
+      this.F = { q: params.q || '', q0: params.q, attach: params.attach || null, busy: '', err: '', res: null, open: {}, song: null };
+      if (this.F.q) setTimeout(() => this.search(), 0);
+    }
+    this.draw();
+  },
+  target() { return this.F.attach ? Lib.get(this.F.attach) : null; },
+  draw() {
+    const F = this.F, page = this.page; if (!page || !page.isConnected) return;
+    clear(page);
+    const tgt = this.target();
+    page.appendChild(backLink(tgt ? 'Lesson' : 'Library', () => tgt ? App.go('media', { id: tgt.id }) : App.go('library')));
+    page.appendChild(pageHead('探す', tgt ? 'Find its translation' : 'Find a song', tgt
+      ? 'Pick the song on animesonglyrics.com that matches “' + tgt.title + '”. Its English translation is matched to your lesson’s lines.'
+      : 'Search animesonglyrics.com by anime or song. Each song comes with its Japanese lyrics, an English translation and its music video.'));
+    if (!this.available()) { page.appendChild(h('div.notice', 'Song search works in the folder and phone versions of Kotonoha.')); return; }
+    const input = h('input#find-q', { type: 'search', value: F.q, placeholder: 'e.g. Steel Ball Run, Gurenge, Frieren…', autocomplete: 'off', enterkeyhint: 'search', 'aria-label': 'Anime or song' });
+    input.addEventListener('input', () => { F.q = input.value; });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); this.search(); } });
+    page.appendChild(h('form.find-form', { onsubmit: e => { e.preventDefault(); this.search(); } }, input, btn('Search', { cls: 'primary', icon: 'next', onclick: () => this.search() })));
+    if (F.busy) page.appendChild(h('div.find-busy', meter(0.5), h('p.sub', F.busy)));
+    if (F.err) page.appendChild(h('div.notice.bad', F.err));
+    if (F.song) { page.appendChild(this.songCard(F.song)); return; }
+    if (F.res) page.appendChild(this.results(F.res));
+    else if (!F.busy) page.appendChild(h('p.fine.find-hint', 'Lyrics and translations come from animesonglyrics.com, read through the r.jina.ai page reader. Only what you search for and the pages you open are sent.'));
+  },
+  async search() {
+    const F = this.F, q = (F.q || '').trim(); if (!q || F.busy) return;
+    F.busy = 'Searching animesonglyrics.com…'; F.err = ''; F.song = null; F.res = null; F.open = {}; this.draw();
+    try { F.res = await ASL.search(q); if (!F.res.anime.length && !F.res.songs.length && !F.res.other.length) F.err = 'Nothing found for “' + q + '”. Try the anime’s Japanese or English title, or the song title.'; }
+    catch (e) { console.warn(e); F.err = 'animesonglyrics.com could not be reached (' + (e.message || 'no answer') + '). Check the connection and try again.'; }
+    F.busy = ''; this.draw();
+  },
+  results(R) {
+    const out = h('div.find-results');
+    if (R.anime.length) out.appendChild(h('section.find-sec', h('h2', duo('アニメ', 'Anime')), h('ul.find-list', R.anime.map(a => {
+      const o = this.F.open[a.slug];
+      return h('li.find-anime' + (o ? '.open' : ''),
+        h('button.find-row', { type: 'button', 'aria-expanded': o ? 'true' : 'false', onclick: () => this.toggleAnime(a) }, h('span.find-t', a.title), h('span.fine', o && o.songs ? plural(o.songs.length, 'song') : 'songs')),
+        o ? (o.songs ? h('ul.find-songs', o.songs.map(s => h('li', h('button.find-row.song', { type: 'button', onclick: () => this.openSong(s.url) }, h('span.find-t', s.title), s.note ? h('span.fine', s.note) : null))))
+          : h('p.fine', o.err || 'Opening…')) : null);
+    }))));
+    const row = s => h('li', h('button.find-row.song', { type: 'button', onclick: () => this.openSong(s.url) }, h('span.find-t', s.title), h('span.fine', [s.artist, s.anime].filter(Boolean).join(' · '))));
+    if (R.songs.length) out.appendChild(h('section.find-sec', h('h2', duo('曲', 'Songs')), h('ul.find-list', R.songs.map(row))));
+    if (R.other && R.other.length) out.appendChild(h('section.find-sec', h('h2', duo('歌詞', 'Songs whose lyrics mention it')), h('ul.find-list', R.other.map(row))));
+    return out;
+  },
+  async toggleAnime(a) {
+    const F = this.F;
+    if (F.open[a.slug]) { delete F.open[a.slug]; this.draw(); return; }
+    F.open[a.slug] = {}; this.draw();
+    try { const A = await ASL.anime(a.slug); F.open[a.slug] = { songs: A.songs }; if (!A.songs.length) F.open[a.slug].err = 'No songs listed.'; }
+    catch (e) { F.open[a.slug] = { err: 'Could not open it (' + (e.message || 'no answer') + ').' }; }
+    this.draw();
+  },
+  async openSong(url) {
+    const F = this.F; if (F.busy) return;
+    F.busy = 'Opening the song…'; F.err = ''; this.draw();
+    try {
+      const song = await ASL.song(url);
+      if (!song.hasKanji) throw new Error('this page has no Japanese lyrics');
+      F.song = { song, lrc: null, lrcState: 'looking' };
+      F.busy = ''; this.draw();
+      this.findTiming(F.song);
+    } catch (e) { console.warn(e); F.busy = ''; F.err = 'Could not use that song: ' + (e.message || 'no answer') + '.'; this.draw(); }
+    try { window.scrollTo(0, 0); } catch (e) {}
+  },
+  /** Synced timing from LRCLIB for the same song, when there is a sure match. */
+  async findTiming(S) {
+    try {
+      const rows = await Lyrics.search(S.song.title, S.song.artist, 0);
+      const art = Align.norm(S.song.artist), ok = rows.filter(r => r.synced && r.jp >= r.lines * 0.5 && r.named && (!art || Align.sim(Align.norm(r.artist), art) > 0.5 || Align.norm(r.artist).indexOf(art) !== -1));
+      S.lrc = ok[0] || null;
+    } catch (e) { S.lrc = null; }
+    S.lrcState = 'done';
+    if (this.F && this.F.song === S && App.cur === 'find') this.draw();
+  },
+  songCard(S) {
+    const s = S.song, tgt = this.target(), F = this.F;
+    const ja = s.kanji.filter(Boolean).length, en = s.english.filter(Boolean).length;
+    const thumb = s.yt ? h('img.find-thumb', { src: 'https://i.ytimg.com/vi/' + s.yt.id + '/mqdefault.jpg', alt: '', loading: 'lazy', onerror: e => e.target.remove() }) : h('div.find-thumb.none', '♪');
+    const facts = h('ul.find-facts',
+      h('li', h('b', String(ja)), ' lines of Japanese lyrics'),
+      h('li', en ? '✓ English translation, matched to each line' : '✗ No English translation on the page'),
+      tgt ? null : h('li', s.yt ? '✓ Music video (plays from YouTube)' : '✗ No music video on the page: add your own file later'),
+      tgt ? null : h('li', S.lrcState === 'looking' ? 'Looking for synced timing on LRCLIB…' : S.lrc ? '✓ Synced timing found on LRCLIB: lines light up with the music' : 'No synced timing found: you’ll tap along once to time the lines'));
+    const acts = h('div.btn-row');
+    if (tgt) acts.appendChild(btn('Add this translation', { cls: 'primary', icon: 'check', disabled: !en || !!F.busy, onclick: () => this.attachTo(tgt, s) }));
+    else acts.appendChild(btn(F.busy ? 'Making the lesson…' : 'Make the lesson', { cls: 'primary', icon: 'plus', disabled: !!F.busy || S.lrcState === 'looking' && !S.waited, onclick: () => this.make(S) }));
+    acts.appendChild(btn('Back to the results', { cls: 'ghost', onclick: () => { F.song = null; this.draw(); } }));
+    acts.appendChild(h('a.btn.ghost.small', { href: s.url, target: '_blank', rel: 'noopener' }, 'Open the page'));
+    if (S.lrcState === 'looking' && !S.waited) setTimeout(() => { if (F.song === S && S.lrcState === 'looking') { S.waited = true; if (App.cur === 'find') this.draw(); } }, 8000);
+    return h('section.find-song', thumb,
+      h('div.find-song-body', h('h2', { lang: 'ja' }, s.title), h('p.sub', [s.artist, s.anime, s.theme].filter(Boolean).join(' · ')), facts, acts,
+        h('p.fine', 'Lyrics and translation from animesonglyrics.com' + (s.yt ? '; the video plays from YouTube and needs a connection' : '') + '.')));
+  },
+  /** Build the lesson from the song. */
+  async make(S) {
+    const F = this.F; if (F.busy) return;
+    F.busy = 'Making the lesson…'; this.draw();
+    try {
+      const s = S.song;
+      let parsed = null;
+      if (S.lrc) parsed = JP.parseTranscript(S.lrc.text, 'lyrics.lrc');
+      if (!parsed || !parsed.lines.length) parsed = JP.parseTranscript(s.kanji.join('\n'), 'lyrics.txt');
+      if (!parsed.lines.length) throw new Error('no Japanese lines left');
+      const lines = parsed.lines.map(l => { const o = { a: l.a, b: l.b, jp: l.jp }; if (l.gap) o.gap = 1; return o; }).slice(0, 1500);
+      if (!Offline.ready()) { F.busy = 'Opening the dictionary first…'; this.draw(); await Offline.load(); }
+      const en = Align.english(lines.map(l => l.jp), s);
+      lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE; } });
+      const m = Lib.newMedia({ title: s.title, artist: s.artist, type: 'song', lines, timed: !!parsed.timed, stageSize: Game.p.settings.stageSize || 0,
+        credit: 'Lyrics and English translation: animesonglyrics.com' + (S.lrc && parsed.timed ? '; timing: LRCLIB' : ''), isVideo: !!s.yt });
+      if (s.yt) { m.yt = s.yt.id; m.ytStart = s.yt.start || 0; }
+      m.source = s.url; m.anime = s.anime; m.theme = s.theme;
+      if (S.lrc && parsed.timed) m.lrcDur = S.lrc.duration || 0;
+      await Lib.create(m);
+      if (m.yt) Player.attachYT(m.id, m.yt, m.title, m.ytStart);
+      Game.p.lastMedia = m.id; Game.touch();
+      const nEn = lines.filter(l => l.en).length;
+      toast('Lesson ready: ' + plural(lines.length, 'line') + (nEn ? ', ' + nEn + ' with a translation' : '') + '.', 'good');
+      F.busy = ''; F.song = null;
+      App.go('theater', { id: m.id, mode: m.timed ? 'watch' : 'learn' });
+    } catch (e) { console.error(e); F.busy = ''; F.err = 'The lesson could not be made: ' + (e.message || e) + '.'; this.draw(); }
+  },
+  /** Add the song's translation to a lesson that already exists (and its music video, when it has no media). */
+  async attachTo(m, s) {
+    const F = this.F; if (F.busy) return;
+    F.busy = 'Matching the translation to your lines…'; this.draw();
+    try {
+      if (!Offline.ready()) await Offline.load();
+      const en = Align.english(m.lines.map(l => l.jp), s);
+      let n = 0;
+      m.lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE; n++; } else if (l.enSrc === ASL.SITE) { delete l.en; delete l.enSrc; } });
+      if (!n) throw new Error('none of its lines matched yours');
+      if (!m.yt && s.yt && !m.fileName) { m.yt = s.yt.id; m.ytStart = s.yt.start || 0; m.isVideo = true; }
+      m.source = m.source || s.url;
+      if (!/animesonglyrics/.test(m.credit || '')) m.credit = [m.credit, 'English translation: animesonglyrics.com'].filter(Boolean).join('; ');
+      await Lib.saveContent(m);
+      Lib.dropStageCache(m.id);
+      toast('English added to ' + n + ' of ' + plural(m.lines.length, 'line') + '.', 'good');
+      F.busy = ''; F.song = null;
+      App.go('media', { id: m.id });
+    } catch (e) { console.error(e); F.busy = ''; F.err = 'The translation could not be added: ' + (e.message || e) + '.'; this.draw(); }
   }
 };
 
@@ -19142,6 +19754,13 @@ Views.guide = {
         h('li', h('b', 'Timing.'), ' Timed subtitle files give every line its own clip. If the subtitles run early or late against your file, nudge them on the lesson page. For pasted lyrics, use Sync timing and tap along once.'),
         h('li', h('b', 'Analysis'), BUILD.local ? ' happens on your computer: a Japanese word splitter (kuromoji with the IPADIC dictionary) finds the words and their readings, the JMdict dictionary supplies meanings, and the game explains conjugations and grammar. No internet or Claude needed.' : ' is done by Claude on your own account, one stage at a time, and saved. Only the text of the lines is sent.'),
         BUILD.local ? h('li', h('b', 'Synced lyrics.'), ' For songs, “Find synced lyrics online” looks the song up in LRCLIB, a free community library of lyrics timed to the music. Only the song title and artist are sent.') : null)));
+    if (BUILD.local) page.appendChild(h('section', h('h2', duo('探す', 'Find a song online')),
+      h('ul.plain',
+        h('li', h('b', 'Search. '), 'Library > Find any anime song: type an anime or a song. Open an anime to see its openings and endings, then pick a song. Lyrics and the English translation come from animesonglyrics.com; its notices are left out.'),
+        h('li', h('b', 'The lesson. '), 'Kotonoha takes the Japanese lines, matches the English translation to each line by sound, and plays the song’s music video from YouTube. When LRCLIB has the song timed, lines light up with the music at once; otherwise you tap along once.'),
+        h('li', h('b', 'Translations as practice. '), 'In Learn, the translation stays hidden until you have tried your own. Play gains a Line meaning game, and tests ask what whole lines mean.'),
+        h('li', h('b', 'Your own songs too. '), 'On a lesson’s map, Tools > English translation finds the song and adds its translation to the lines you already have.'),
+        h('li', h('b', 'Where it works. '), 'Searching needs a connection. Music videos play in the web and phone version' + (BUILD.web ? ' (' + BUILD.web + ')' : '') + '; the copy opened from disk plays your own files.'))));
     if (BUILD.hosted) page.appendChild(h('section', h('h2', duo('スマホ', 'On your phone')),
       h('ul.plain',
         h('li', h('b', 'Install it. '), 'In Chrome, open the menu (⋮) and choose Install app (or Add to Home screen). Kotonoha gets its own icon, opens full screen and works with no connection.'),
@@ -19303,7 +19922,7 @@ async function boot(snap) {
     Game.startClock();
     const late = debounce(() => { if (App.cur) App.refresh(); }, 200);
     Bus.on('ai-ready', late); Bus.on('voice-ready', late); Bus.on('mic-ready', late);
-    Bus.on('player-error', () => { toast('This browser cannot play that file. The voice will read the lines instead.', 'bad'); if (App.cur === 'media') App.refresh(); });
+    Bus.on('player-error', id => { toast(Player.isYouTube(id) ? 'The music video cannot play here. The voice will read the lines instead.' : 'This browser cannot play that file. The voice will read the lines instead.', 'bad'); if (App.cur === 'media') App.refresh(); });
     Bus.on('store-fallback', () => toast('Could not reach your saved progress. Working in this browser for now.', 'bad'));
     Voice.init(); Mic.init(); AI.init();
     try { await Folder.init(); } catch (e) { console.warn('folder', e); }
