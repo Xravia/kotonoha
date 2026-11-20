@@ -11790,7 +11790,7 @@ button.kcell:hover { border-color: var(--ai); }
 比率	ひりつ	ratio, proportion, percentage	1	0
 </script>
 <script>
-window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-19","hosted":true,"web":"https://xravia.github.io/kotonoha/"};
+window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-20","hosted":true,"web":"https://xravia.github.io/kotonoha/"};
 </script>
 <script>
 /* ===== 00-util.js ===== */
@@ -19906,17 +19906,28 @@ Views.kana.soft = function () { if (this.K && !this.K.drill) this.draw(); };
 
 async function boot(snap) {
   const view = $('#view');
+  /* Each step is named, so a start that hangs says where; after 12 s the learner gets a way forward. */
+  const STEPS = { store: 'opening your saved progress', game: 'reading your progress', srs: 'reading your word garden', lib: 'reading your lessons', folder: 'looking in your media folder', start: 'drawing the screen' };
+  let step = 'store', started = false, slow = 0, stuck = 0;
+  const msg = h('p.sub', 'Opening your notebook…'), help = h('div.boot-help');
+  const onErr = e => { if (started) return; const r = e && (e.reason || e.error || e); help.appendChild(h('p.fine', 'Problem while ' + (STEPS[step] || step) + ': ' + String(r && r.message || r).slice(0, 160))); };
+  try { window.addEventListener('unhandledrejection', onErr); window.addEventListener('error', onErr); } catch (e) {}
   try {
     Player.init();
     App.drawTop();
-    const msg = h('p.sub', 'Opening your notebook…');
-    mount(view, h('div.page.narrow.loading', h('p.loading-mark', { lang: 'ja' }, '言の葉'), msg));
-    const slow = setTimeout(() => { msg.textContent = 'Still looking for your saved progress…'; }, 3500);
+    mount(view, h('div.page.narrow.loading', h('p.loading-mark', { lang: 'ja' }, '言の葉'), msg, help));
+    slow = setTimeout(() => { msg.textContent = 'Still ' + (STEPS[step] || step) + '…'; }, 3500);
+    stuck = setTimeout(() => {
+      if (started) return;
+      help.appendChild(h('p.fine', 'This is taking longer than it should (' + (STEPS[step] || step) + '). Closing other Kotonoha tabs and trying again usually helps.'));
+      help.appendChild(h('div.btn-row.center', btn('Try again', { cls: 'primary', onclick: () => location.reload() }),
+        btn('Open an empty practice copy', { cls: 'ghost', onclick: () => { location.hash = '#sandbox'; location.reload(); } })));
+    }, 12000);
     await Store.init();
-    await Game.load();
+    step = 'game'; await Game.load();
     try { await Game.migrateLocalIfNeeded(); } catch (e) { console.warn(e); }
-    await Srs.load();
-    await Lib.load();
+    step = 'srs'; await Srs.load();
+    step = 'lib'; await Lib.load();
     clearTimeout(slow);
     Dict.load();
     Game.startClock();
@@ -19925,8 +19936,14 @@ async function boot(snap) {
     Bus.on('player-error', id => { toast(Player.isYouTube(id) ? 'The music video cannot play here. The voice will read the lines instead.' : 'This browser cannot play that file. The voice will read the lines instead.', 'bad'); if (App.cur === 'media') App.refresh(); });
     Bus.on('store-fallback', () => toast('Could not reach your saved progress. Working in this browser for now.', 'bad'));
     Voice.init(); Mic.init(); AI.init();
-    try { await Folder.init(); } catch (e) { console.warn('folder', e); }
+    // the media folder is looked at in the background after a short wait: a big or slow folder must not hold up the game
+    step = 'folder';
+    const folderDone = Folder.init().catch(e => console.warn('folder', e));
+    await Promise.race([folderDone, sleep(2500)]);
+    step = 'start';
     App.start(snap || {});
+    started = true; clearTimeout(stuck);
+    try { window.removeEventListener('unhandledrejection', onErr); window.removeEventListener('error', onErr); } catch (e) {}
     PhoneApp.init();
     Bus.on('phone', () => { if (App.cur === 'today') App.refresh(); });
     Bus.on('folder', () => { if (App.cur === 'library') App.render(false); });
@@ -19935,7 +19952,9 @@ async function boot(snap) {
     if (Offline.wanted()) { Bus.on('offline', st => { if (st === 'ready' || st === 'missing' || st === 'error') late(); }); Offline.load(); }
   } catch (e) {
     console.error(e);
-    mount(view, h('div.page.narrow', h('div.notice.bad', h('b', 'The game could not start. '), 'Reload the page. If it keeps happening, your browser may be blocking storage for this page.')));
+    clearTimeout(slow); clearTimeout(stuck);
+    mount(view, h('div.page.narrow', h('div.notice.bad', h('b', 'The game could not start. '), 'It stopped while ' + (STEPS[step] || step) + ': ' + String(e && e.message || e).slice(0, 200) + '. Reload the page. If it keeps happening, your browser may be blocking storage for this page.'),
+      h('div.btn-row', btn('Try again', { cls: 'primary', onclick: () => location.reload() }), btn('Open an empty practice copy', { cls: 'ghost', onclick: () => { location.hash = '#sandbox'; location.reload(); } }))));
   }
 }
 

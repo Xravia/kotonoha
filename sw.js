@@ -1,7 +1,7 @@
-/* Kotonoha offline app (2026-11-19). Keeps the game and its dictionaries on the device so it opens
+/* Kotonoha offline app (2026-11-20). Keeps the game and its dictionaries on the device so it opens
    with no connection. A new build changes VERSION, the browser installs it in the background, and the page offers "Update now". */
 'use strict';
-const VERSION = '5d0fc4f034ba';
+const VERSION = 'c7febbf416fc';
 const CACHE = 'kotonoha-' + VERSION, FONTS = 'kotonoha-fonts';
 const FILES = ["./","index.html","manifest.webmanifest","icons/icon-192.png","icons/icon-512.png","icons/maskable-512.png","icons/apple-touch-icon.png","data/kuromoji.js","data/kuro-1.js","data/kuro-2.js","data/kuro-3.js","data/kuro-4.js","data/jmdict.js","data/strokes.js","data/LICENSES.txt"];
 self.addEventListener('install', e => {
