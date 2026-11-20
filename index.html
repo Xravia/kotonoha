@@ -1090,6 +1090,7 @@ button.kcell:hover { border-color: var(--ai); }
 .qt-sense .opt-g { text-align: left; line-height: 1.35; }
 .th-slot .yt-wrap { width: 100%; height: 100%; aspect-ratio: auto; }
 .th-slot:not(.has-media) .yt-wrap { visibility: hidden; }
+.find-facts .find-warn { color: var(--warn); font-weight: 600; }
 
 </style>
 </head>
@@ -12193,7 +12194,8 @@ const JP = (() => {
     return out;
   }
   /** Parse any supported transcript. Returns {format, timed, lines:[{a,b,jp,gap}], dropped}. */
-  function parseTranscript(text, filename) {
+  function parseTranscript(text, filename, opts) {
+    const lyrics = !!(opts && opts.lyrics);
     text = (text || '').replace(/^﻿/, '');
     const ext = ((filename || '').match(/\.([a-z0-9]+)$/i) || [])[1];
     let format = 'text', lines = [];
@@ -12206,7 +12208,10 @@ const JP = (() => {
     const before = lines.length;
     // keep spoken Japanese only; drop sound-effect captions such as （拍手） or ♪～
     // ...and, in pasted lyrics, credit lines (作詞：…) and section labels (【サビ】)
-    lines = lines.filter(l => hasJapanese(l.jp) && !/^[（(［\[【〔][^）)\]］】〕]*[)）\]］】〕]$/.test(l.jp) &&
+    // in song lyrics a line in round brackets is usually a backing vocal, which is sung: keep it unless it is a sound note
+    const bracketed = l => lyrics ? /^[［\[【〔][^）)\]］】〕]*[\]］】〕]$/.test(l) || /^[（(][^）)]*(拍手|笑|歓声|間奏|音楽|BGM|SE|効果音|ナレーション)[^）)]*[)）]$/.test(l)
+      : /^[（(［\[【〔][^）)\]］】〕]*[)）\]］】〕]$/.test(l);
+    lines = lines.filter(l => hasJapanese(l.jp) && !bracketed(l.jp) &&
       !/^(作詞|作曲|編曲|歌手|歌|唄|アーティスト|ボーカル|曲名|タイトル)\s*[:：]/.test(l.jp));
     if (lines.length && lines[0].a != null) {
       lines.sort((x, y) => x.a - y.a);
@@ -14869,17 +14874,40 @@ const Align = {
     }
     return out;
   },
-  /** English for each Japanese line, from a song page (romaji and English that share their line structure). */
+  /** Words that mark English text (not Japanese written in romaji). */
+  EN_WORDS: new Set("the you your and my me is are was were it's i'm don't can't won't this that with all what when where why who will would could never ever love heart night just like in of for be we they she her his our their from into out over only i'll you're".split(' ')),
+  /** Is this "romaji" really English? (On some pages the original lyrics are English and the Kanji tab is a translation.) */
+  englishy(lines) {
+    let w = 0, e = 0;
+    for (const l of lines) for (const x of String(l).toLowerCase().split(/[^a-z']+/)) { if (!x) continue; w++; if (this.EN_WORDS.has(x)) e++; }
+    return w >= 15 && e / w > 0.12;
+  },
+  sungInEnglish(song) {
+    const ro = (song.romaji || []).filter(Boolean), en = (song.english || []).filter(Boolean);
+    return this.englishy(ro) || (ro.length > 3 && ro.length === en.length && ro.every((l, i) => l === en[i]));
+  },
+  blocks(lines) { const b = [[]]; for (const l of lines) { if (!l) { if (b[b.length - 1].length) b.push([]); } else b[b.length - 1].push(l); } return b.filter(x => x.length); },
+  /** Line i of n takes its share of m translated lines. */
+  spread(ja, en) { const n = ja.length, m = en.length; return ja.map((_, i) => { const a = Math.floor(i * m / n), z = Math.max(a + 1, Math.floor((i + 1) * m / n)); return en.slice(a, Math.min(z, m)).join(' / '); }); },
+  /** By position, verse by verse when the verses line up, otherwise across the song. */
+  byPosition(jaLines, song) {
+    const jb = this.blocks(song.kanji || []), eb = this.blocks(song.english || []);
+    const sameText = jb.reduce((n, b) => n + b.length, 0) === jaLines.length && jb.flat().every((l, i) => l === jaLines[i]);
+    if (sameText && jb.length === eb.length) return [].concat(...jb.map((b, k) => this.spread(b, eb[k])));
+    return this.spread(jaLines, (song.english || []).filter(Boolean));
+  },
+  /** English for each Japanese line, from a song page. Result has .approx when lines could only be matched by position. */
   english(jaLines, song) {
     const ro = (song.romaji || []).filter(Boolean), en = (song.english || []).filter(Boolean);
-    if (!ro.length || !en.length) return jaLines.map(() => '');
-    if (ro.length !== en.length) {                             // fall back to verse by verse, line by line
-      const out = jaLines.map(() => '');
-      if (jaLines.length === en.length) return en.slice();
-      return out;
+    if (!en.length) return jaLines.map(() => '');
+    if (ro.length && ro.length === en.length && !this.sungInEnglish(song)) {
+      const hit = this.match(jaLines, ro);
+      const got = hit.filter(js => js.length).length;
+      if (got >= jaLines.length * 0.4) return hit.map(js => js.length ? uniq(js).sort((a, b) => a - b).map(j => en[j]).join(' / ') : '');
     }
-    const hit = this.match(jaLines, ro);
-    return hit.map(js => js.length ? uniq(js).sort((a, b) => a - b).map(j => en[j]).join(' / ') : '');
+    const out = this.byPosition(jaLines, song);
+    out.approx = true;
+    return out;
   }
 };
 
@@ -16574,7 +16602,7 @@ Views.media = {
     const nEn = m.lines.filter(l => l.en).length;
     page.appendChild(h('section.tools', h('h2', duo('道具', 'Tools')),
       m.sample || !Views.find.available() ? null : h('div.tool-row',
-        h('div', h('h3', duo('英訳', 'English translation')), h('p.sub', nEn ? nEn + ' of ' + plural(m.lines.length, 'line') + ' have a translation' + (m.lines.some(l => l.enSrc === ASL.SITE) ? ' from animesonglyrics.com' : '') + '.'
+        h('div', h('h3', duo('英訳', 'English translation')), h('p.sub', nEn ? nEn + ' of ' + plural(m.lines.length, 'line') + ' have a translation' + (m.lines.some(l => String(l.enSrc || '').indexOf(ASL.SITE) === 0) ? ' from animesonglyrics.com' : '') + '.'
           : 'Find this song on animesonglyrics.com and match its English translation to each of your lines (and its music video, when the lesson has no file).')),
         btn(nEn ? 'Find again' : 'Find it', { icon: 'next', onclick: () => App.go('find', { q: [m.title, m.artist].filter(Boolean).join(' '), attach: m.id }) })),
       m.sample ? null : h('div.tool-row',
@@ -18800,11 +18828,12 @@ Views.find = {
   },
   songCard(S) {
     const s = S.song, tgt = this.target(), F = this.F;
-    const ja = s.kanji.filter(Boolean).length, en = s.english.filter(Boolean).length;
+    const ja = s.kanji.filter(Boolean).length, en = s.english.filter(Boolean).length, inEnglish = Align.sungInEnglish(s);
     const thumb = s.yt ? h('img.find-thumb', { src: 'https://i.ytimg.com/vi/' + s.yt.id + '/mqdefault.jpg', alt: '', loading: 'lazy', onerror: e => e.target.remove() }) : h('div.find-thumb.none', '♪');
     const facts = h('ul.find-facts',
       h('li', h('b', String(ja)), ' lines of Japanese lyrics'),
-      h('li', en ? '✓ English translation, matched to each line' : '✗ No English translation on the page'),
+      inEnglish ? h('li.find-warn', '⚠ This song is sung mostly in English. The Japanese here is a translation, so it will not match what you hear: good for reading, not for listening.') : null,
+      h('li', en ? (inEnglish ? '✓ English lyrics, lined up verse by verse' : '✓ English translation, matched to each line') : '✗ No English translation on the page'),
       tgt ? null : h('li', s.yt ? '✓ Music video (plays from YouTube)' : '✗ No music video on the page: add your own file later'),
       tgt ? null : h('li', S.lrcState === 'looking' ? 'Looking for synced timing on LRCLIB…' : S.lrc ? '✓ Synced timing found on LRCLIB: lines light up with the music' : 'No synced timing found: you’ll tap along once to time the lines'));
     const acts = h('div.btn-row');
@@ -18824,13 +18853,13 @@ Views.find = {
     try {
       const s = S.song;
       let parsed = null;
-      if (S.lrc) parsed = JP.parseTranscript(S.lrc.text, 'lyrics.lrc');
-      if (!parsed || !parsed.lines.length) parsed = JP.parseTranscript(s.kanji.join('\n'), 'lyrics.txt');
+      if (S.lrc) parsed = JP.parseTranscript(S.lrc.text, 'lyrics.lrc', { lyrics: true });
+      if (!parsed || !parsed.lines.length) parsed = JP.parseTranscript(s.kanji.join('\n'), 'lyrics.txt', { lyrics: true });
       if (!parsed.lines.length) throw new Error('no Japanese lines left');
       const lines = parsed.lines.map(l => { const o = { a: l.a, b: l.b, jp: l.jp }; if (l.gap) o.gap = 1; return o; }).slice(0, 1500);
       if (!Offline.ready()) { F.busy = 'Opening the dictionary first…'; this.draw(); await Offline.load(); }
       const en = Align.english(lines.map(l => l.jp), s);
-      lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE; } });
+      lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx ? ', matched by position' : ''); } });
       const m = Lib.newMedia({ title: s.title, artist: s.artist, type: 'song', lines, timed: !!parsed.timed, stageSize: Game.p.settings.stageSize || 0,
         credit: 'Lyrics and English translation: animesonglyrics.com' + (S.lrc && parsed.timed ? '; timing: LRCLIB' : ''), isVideo: !!s.yt });
       if (s.yt) { m.yt = s.yt.id; m.ytStart = s.yt.start || 0; }
@@ -18853,7 +18882,7 @@ Views.find = {
       if (!Offline.ready()) await Offline.load();
       const en = Align.english(m.lines.map(l => l.jp), s);
       let n = 0;
-      m.lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE; n++; } else if (l.enSrc === ASL.SITE) { delete l.en; delete l.enSrc; } });
+      m.lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx ? ', matched by position' : ''); n++; } else if (String(l.enSrc || '').indexOf(ASL.SITE) === 0) { delete l.en; delete l.enSrc; } });
       if (!n) throw new Error('none of its lines matched yours');
       if (!m.yt && s.yt && !m.fileName) { m.yt = s.yt.id; m.ytStart = s.yt.start || 0; m.isVideo = true; }
       m.source = m.source || s.url;
