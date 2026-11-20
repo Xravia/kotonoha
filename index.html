@@ -14896,14 +14896,55 @@ const Align = {
     if (sameText && jb.length === eb.length) return [].concat(...jb.map((b, k) => this.spread(b, eb[k])));
     return this.spread(jaLines, (song.english || []).filter(Boolean));
   },
-  /** English for each Japanese line, from a song page. Result has .approx when lines could only be matched by position. */
+  /** Which English lines go with each romaji line. The two tabs often split verses differently (one verse in the
+      English where the romaji has two, or a shortened last chorus), so verses are paired first by size, then lines
+      within a verse: one for one when the counts agree, by position otherwise (marked approx). */
+  roToEn(song) {
+    const rb = this.blocks(song.romaji || []), eb = this.blocks(song.english || []);
+    const R = rb.map(b => b.length), E = eb.map(b => b.length), n = R.length, m = E.length, NEG = -1e9;
+    const S = Array.from({ length: n + 1 }, () => new Float64Array(m + 1).fill(NEG)), from = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(null));
+    S[0][0] = 0;
+    const sum = (A, i, k) => { let t = 0; for (let x = i; x < i + k; x++) t += A[x]; return t; };
+    for (let i = 0; i <= n; i++) for (let j = 0; j <= m; j++) {
+      const cur = S[i][j]; if (cur <= NEG / 2) continue;
+      const set = (a, b, v, how) => { if (v > S[a][b]) { S[a][b] = v; from[a][b] = how; } };
+      if (i < n) set(i + 1, j, cur - R[i] - 1, [i, j, 1, 0]);
+      if (j < m) set(i, j + 1, cur - E[j] - 1, [i, j, 0, 1]);
+      for (let a = 1; a <= 3 && i + a <= n; a++) for (let b = 1; b <= 3 && j + b <= m; b++) {
+        if (a > 1 && b > 1) continue;
+        set(i + a, j + b, cur - Math.abs(sum(R, i, a) - sum(E, j, b)) * 0.8 - 0.4 * (a + b - 2) + 1, [i, j, a, b]);
+      }
+    }
+    const groups = []; let i = n, j = m;
+    while (i > 0 || j > 0) { const f = from[i][j]; if (!f) break; groups.unshift(f); i = f[0]; j = f[1]; }
+    const rStart = [], eStart = []; let t = 0; R.forEach((x, k) => { rStart[k] = t; t += x; }); t = 0; E.forEach((x, k) => { eStart[k] = t; t += x; });
+    const total = R.reduce((a, b) => a + b, 0), map = Array.from({ length: total }, () => ({ en: [], approx: true }));
+    for (const [gi, gj, a, b] of groups) {
+      if (!a) continue;
+      const ro = [], en = [];
+      for (let k = gi; k < gi + a; k++) for (let x = 0; x < R[k]; x++) ro.push(rStart[k] + x);
+      for (let k = gj; k < gj + b; k++) for (let x = 0; x < E[k]; x++) en.push(eStart[k] + x);
+      if (!en.length) continue;
+      if (ro.length === en.length) ro.forEach((r, k) => { map[r] = { en: [en[k]], approx: false }; });
+      else ro.forEach((r, k) => { const s0 = Math.floor(k * en.length / ro.length), z = Math.max(s0 + 1, Math.floor((k + 1) * en.length / ro.length)); map[r] = { en: en.slice(s0, Math.min(z, en.length)), approx: true }; });
+    }
+    return map;
+  },
+  /** English for each Japanese line, from a song page. Japanese lines are matched to romaji lines by sound, and
+      romaji lines to English lines verse by verse. Result: an array of strings, with .approx (all by position) or
+      .approxLines (which lines were placed by position). */
   english(jaLines, song) {
     const ro = (song.romaji || []).filter(Boolean), en = (song.english || []).filter(Boolean);
     if (!en.length) return jaLines.map(() => '');
-    if (ro.length && ro.length === en.length && !this.sungInEnglish(song)) {
+    if (ro.length && !this.sungInEnglish(song)) {
       const hit = this.match(jaLines, ro);
       const got = hit.filter(js => js.length).length;
-      if (got >= jaLines.length * 0.4) return hit.map(js => js.length ? uniq(js).sort((a, b) => a - b).map(j => en[j]).join(' / ') : '');
+      if (got >= jaLines.length * 0.4) {
+        const map = this.roToEn(song);
+        const out = hit.map(js => { const ids = uniq([].concat(...js.map(j => (map[j] || { en: [] }).en))).sort((a, b) => a - b); return ids.map(k => en[k]).join(' / '); });
+        out.approxLines = hit.map(js => js.some(j => !map[j] || map[j].approx));
+        return out;
+      }
     }
     const out = this.byPosition(jaLines, song);
     out.approx = true;
@@ -18859,7 +18900,7 @@ Views.find = {
       const lines = parsed.lines.map(l => { const o = { a: l.a, b: l.b, jp: l.jp }; if (l.gap) o.gap = 1; return o; }).slice(0, 1500);
       if (!Offline.ready()) { F.busy = 'Opening the dictionary first…'; this.draw(); await Offline.load(); }
       const en = Align.english(lines.map(l => l.jp), s);
-      lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx ? ', matched by position' : ''); } });
+      lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx || (en.approxLines && en.approxLines[i]) ? ', matched by position' : ''); } });
       const m = Lib.newMedia({ title: s.title, artist: s.artist, type: 'song', lines, timed: !!parsed.timed, stageSize: Game.p.settings.stageSize || 0,
         credit: 'Lyrics and English translation: animesonglyrics.com' + (S.lrc && parsed.timed ? '; timing: LRCLIB' : ''), isVideo: !!s.yt });
       if (s.yt) { m.yt = s.yt.id; m.ytStart = s.yt.start || 0; }
@@ -18882,7 +18923,7 @@ Views.find = {
       if (!Offline.ready()) await Offline.load();
       const en = Align.english(m.lines.map(l => l.jp), s);
       let n = 0;
-      m.lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx ? ', matched by position' : ''); n++; } else if (String(l.enSrc || '').indexOf(ASL.SITE) === 0) { delete l.en; delete l.enSrc; } });
+      m.lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx || (en.approxLines && en.approxLines[i]) ? ', matched by position' : ''); n++; } else if (String(l.enSrc || '').indexOf(ASL.SITE) === 0) { delete l.en; delete l.enSrc; } });
       if (!n) throw new Error('none of its lines matched yours');
       if (!m.yt && s.yt && !m.fileName) { m.yt = s.yt.id; m.ytStart = s.yt.start || 0; m.isVideo = true; }
       m.source = m.source || s.url;
