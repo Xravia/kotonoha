@@ -1253,6 +1253,60 @@ body[data-view="theater"] #backdrop.video .bd-video, body[data-view="study"] #ba
 .shadow-turn .btn.on { background: var(--shu-soft); color: var(--shu); }
 .talk-opts select { margin-left: 6px; }
 
+/* ---------- Make a lesson ---------- */
+.make-box { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+.make-box input { flex: 1; min-width: 0; font-size: 17px; padding: 11px 12px; border: 1.5px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.make-box input:focus { border-color: var(--ai); outline: none; }
+.make-mic.on { background: var(--shu-soft); color: var(--shu); }
+.make-try { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.chip-btn { padding: 4px 10px; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); font-size: 14px; }
+.chip-btn:hover { border-color: var(--ink-3); }
+.make-today { gap: 6px !important; }
+.make-steps { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; padding: 14px 16px; border: 1px solid var(--rule); border-radius: var(--r); background: var(--surface); }
+.make-steps li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 8px; align-items: start; color: var(--ink-3); }
+.make-steps li p { font-size: 14px; color: var(--ink-2); overflow-wrap: anywhere; }
+.make-steps li.done, .make-steps li.work, .make-steps li.warn, .make-steps li.ask, .make-steps li.fail { color: var(--ink); }
+.make-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; font-size: 13px; font-weight: 700; border: 1.5px solid var(--rule); }
+li.done .make-mark { background: var(--good-soft); color: var(--good); border-color: var(--good); }
+li.warn .make-mark, li.ask .make-mark { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+li.fail .make-mark { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+.spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--rule); border-top-color: var(--ai); animation: spin 0.8s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.make-choose { padding: 14px 16px; border: 1.5px solid var(--warn); border-radius: var(--r); background: var(--surface); }
+.make-done { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.make-song { display: flex; gap: 16px; flex-wrap: wrap; padding: 16px; border: 1px solid var(--ink); border-radius: var(--r); background: var(--surface); }
+.make-song h2 { font-family: var(--f-jp); font-size: 26px; }
+.make-how { margin-top: 14px; }
+
+/* ---------- the plan ---------- */
+.plan-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--rule); border-radius: var(--r); background: var(--surface); }
+.plan-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; justify-content: space-between; }
+.plan-level { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--well); }
+.plan-level.comfortable { background: var(--good-soft); color: var(--good); }
+.plan-level.stretch { background: var(--ai-soft); color: var(--ai); }
+.plan-level.challenge, .plan-level.hard { background: var(--warn-soft); color: var(--warn); }
+.plan-intro { padding: 10px 12px; border-left: 3px solid var(--shu); background: var(--paper); }
+.plan-intro p + p { margin-top: 4px; }
+.plan-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.plan-chips li { display: inline-flex; gap: 6px; align-items: baseline; padding: 4px 10px; border: 1px solid var(--rule); border-radius: 8px; font-size: 13px; background: var(--paper); }
+.plan-chips li b { font-family: var(--f-jp); font-size: 16px; font-weight: 600; }
+.plan-chips li small { color: var(--ink-3); }
+.plan-chips li span { color: var(--ink-2); }
+.plan-days ol { display: flex; flex-direction: column; gap: 4px; padding-left: 0; }
+.plan-days li { font-size: 14px; color: var(--ink-2); }
+.plan-days li b { color: var(--ink); }
+.plan-card h3 { font-size: 15px; margin-bottom: 6px; }
+
+/* ---------- one-tap timing ---------- */
+.tap-sync .tap-line { font-family: var(--f-jp); font-size: 22px; margin: 6px 0; }
+.tap-now { font-size: 20px; padding: 12px 28px; }
+
+/* ---------- Kokoro, the voice on this device ---------- */
+.field-block { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); }
+.field-block h4 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.kokoro-box { display: flex; flex-direction: column; gap: 8px; }
+.kokoro-prog { display: flex; flex-direction: column; gap: 4px; }
+
 </style>
 </head>
 <body>
@@ -14861,19 +14915,31 @@ const Web = {
     const tm = setTimeout(() => { try { ctl && ctl.abort(); } catch (e) {} }, ms || 20000);
     try {
       const r = await fetch(u, Object.assign({}, opts || {}, ctl ? { signal: ctl.signal } : {}));
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
       return await r.text();
     } finally { clearTimeout(tm); }
   },
-  /** The HTML of a page on another site. */
-  async html(url) {
+  _next: 0,
+  /** Readers are shared services: one request at a time a short while apart, and a second try after "too many". */
+  async polite(fn) {
+    const wait = this._next - Date.now(); this._next = Math.max(Date.now(), this._next) + 400;
+    if (wait > 0) await sleep(wait);
+    try { return await fn(); }
+    catch (e) { if (e && (e.status === 429 || e.status === 503)) { await sleep(2500); return fn(); } throw e; }
+  },
+  /** The HTML of a page on another site. o.nocache: do not keep it in memory (big pages). */
+  async html(url, o) {
+    o = o || {};
     if (this.cache.has(url)) return this.cache.get(url);
     let last = null;
     for (const mk of this.READERS) {
       const { url: u, opts } = mk(url);
       try {
-        const text = await this.get(u, opts, 25000);
-        if (text && text.length > 400 && !/^\s*\{\s*"(code|error)"/.test(text)) { this.cache.set(url, text); if (this.cache.size > 40) this.cache.delete(this.cache.keys().next().value); return text; }
+        const text = await this.polite(() => this.get(u, opts, 25000));
+        if (text && text.length > 400 && !/^\s*\{\s*"(code|error)"/.test(text)) {
+          if (!o.nocache) { this.cache.set(url, text); if (this.cache.size > 40) this.cache.delete(this.cache.keys().next().value); }
+          return text;
+        }
         last = new Error('empty page');
       } catch (e) { last = e; }
     }
@@ -15153,9 +15219,17 @@ const Voice = {
     const pref = (Game.p && Game.p.settings.voice) || 'auto';
     if (pref === 'off' || this.ttsOff) return null;     // the viewer switched reading aloud off: stay silent
     const claudeOk = !!this.tts && this.ttsJa;
-    const browserOk = !!this.synth && this.voices.length > 0;
-    if (pref === 'browser') return browserOk ? 'browser' : (claudeOk ? 'claude' : null);
-    return claudeOk ? 'claude' : (browserOk ? 'browser' : null);
+    const browserOk = this.browserOk();
+    const kokoroOk = typeof Kokoro !== 'undefined' && Kokoro.installed;
+    if (pref === 'kokoro') return kokoroOk ? 'kokoro' : browserOk ? 'browser' : (claudeOk ? 'claude' : null);
+    if (pref === 'browser') return browserOk ? 'browser' : (claudeOk ? 'claude' : kokoroOk ? 'kokoro' : null);
+    return claudeOk ? 'claude' : browserOk ? 'browser' : kokoroOk ? 'kokoro' : null;
+  },
+  /** A browser voice that can speak now: one on this device, or any while online (Edge's natural voices need the internet). */
+  browserOk() {
+    if (!this.synth || !this.voices.length) return false;
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    return !offline || this.voices.some(v => v.localService !== false);
   },
   available() { return !!this.engine(); },
   rate() { return clamp((Game.p && Game.p.settings.rate) || 1, 0.7, 1.3); },
@@ -15180,6 +15254,10 @@ const Voice = {
   label(v) { return String(v.name || '').replace(/\s*[-–]\s*Japanese.*$/i, '').replace(/^Microsoft\s+/, '').replace(/\s+Online\b/i, '').replace(/\s*\((Natural|Neural)\)/i, '') + (/natural|neural/i.test(v.name) ? ' (natural)' : '') + (v.localService === false ? ' · needs internet' : ''); },
   /** Where to find a Japanese voice when this browser has none. */
   help() {
+    const k = typeof Kokoro !== 'undefined' && Kokoro.allowed() && !Kokoro.installed ? ' Or download Kokoro in Settings > Voice: a natural voice that runs on this device, also offline (about ' + Kokoro.MB + ' MB, once).' : '';
+    return this._help() + k;
+  },
+  _help() {
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
     if (/Android/i.test(ua)) return 'This phone has no Japanese voice for the browser. In Android Settings > System > Languages > Text-to-speech, choose Google’s engine and install Japanese; then reopen Kotonoha.';
     if (/iPhone|iPad|Macintosh/i.test(ua)) return 'Add a Japanese voice: Settings > Accessibility > Spoken Content > Voices > Japanese (Kyoko or O-ren, the “Enhanced” versions sound best); then reopen Kotonoha.';
@@ -15203,6 +15281,7 @@ const Voice = {
       try { await this.tts.speak(text.slice(0, 1900), { language: 'ja', rate }); return true; }
       catch (e) { return this._claudeFail(e, () => this._browserSpeak(text, rate), opts.auto); }
     }
+    if (eng === 'kokoro') { this._seq = null; return Kokoro.speak(text, rate); }
     return this._browserSpeak(text, rate);
   },
   /** Speak several lines as one reading; onLine(k) fires as each begins. */
@@ -15228,6 +15307,22 @@ const Voice = {
     }
     this._seq = {};
     const token = this._seq;
+    if (eng === 'kokoro') {
+      Kokoro.ctx();                                             // inside the click, so the browser lets it play
+      let next = Kokoro.audio(texts[0], rate).catch(() => null);
+      for (let k = 0; k < texts.length; k++) {
+        const a = await next;
+        if (this._seq !== token) return false;
+        next = k + 1 < texts.length ? Kokoro.audio(texts[k + 1], rate).catch(() => null) : null;   // the next line is made while this one plays
+        if (!a) return false;
+        if (opts.onLine) opts.onLine(k);
+        const my = ++Kokoro._gen;
+        const ok = await Kokoro.play(a, null, my);
+        if (!ok || this._seq !== token) return false;
+        await sleep(250);
+      }
+      return true;
+    }
     for (let k = 0; k < texts.length; k++) {
       if (this._seq !== token) return false;
       if (opts.onLine) opts.onLine(k);
@@ -15270,6 +15365,8 @@ const Voice = {
           const why = ev && ev.error;
           const local = !retried && v && v.localService === false && why !== 'interrupted' && why !== 'canceled' ? this.sorted().find(x => x.localService) : null;
           if (local && !done) { done = true; res(this._browserSpeak(text, rate, true, local, true)); return; }
+          // no voice on this device: the Kokoro voice, if it is set up
+          if (!done && !retried && why !== 'interrupted' && why !== 'canceled' && typeof Kokoro !== 'undefined' && Kokoro.installed) { done = true; res(Kokoro.speak(text, rate)); return; }
           fin(false);
         };
         this._utter = u; this.state = 'speaking'; Bus.emit('voice-state', 'speaking');
@@ -15280,6 +15377,7 @@ const Voice = {
   },
   stop() {
     this._seq = null;
+    try { if (typeof Kokoro !== 'undefined') Kokoro.stop(); } catch (e) {}
     try { if (this.tts && this.tts.active && this.tts.active()) this.tts.stop().catch(() => {}); } catch (e) {}
     try { if (this.synth) this.synth.cancel(); } catch (e) {}
   },
@@ -15366,6 +15464,1139 @@ function browserDictation() {
     stop() { try { if (rec) rec.stop(); } catch (e) {} return Promise.resolve(); }
   };
 }
+
+/* ===== 51-kokoro.js ===== */
+/* ---------- 51-kokoro: a Japanese voice that runs on this device (Kokoro-82M), for when the browser has none ---------- */
+'use strict';
+/* Kokoro (hexgrad, Apache 2.0) speaks from phonemes. Its Japanese voices learned from the phonemes made by misaki's
+   "cutlet" route (MIT): words split by a dictionary, read as pronounced, then kana turned into IPA. That route is
+   repeated here with kuromoji's pronunciations. The model runs in ONNX Runtime Web (WebAssembly, one thread). */
+
+const KG2P = {
+  T: {"ぁ":"a","あ":"a","ぃ":"i","い":"i","ぅ":"ɯ","う":"ɯ","ぇ":"e","え":"e","ぉ":"o","お":"o","か":"ka","が":"ɡa","き":"kʲi","ぎ":"ɡʲi","く":"kɯ","ぐ":"ɡɯ","け":"ke","げ":"ɡe","こ":"ko","ご":"ɡo","さ":"sa","ざ":"ʣa","し":"ɕi","じ":"ʥi","す":"sɨ","ず":"zɨ","せ":"se","ぜ":"ʣe","そ":"so","ぞ":"ʣo","た":"ta","だ":"da","ち":"ʨi","ぢ":"ʥi","つ":"ʦɨ","づ":"zɨ","て":"te","で":"de","と":"to","ど":"do","な":"na","に":"ɲi","ぬ":"nɯ","ね":"ne","の":"no","は":"ha","ば":"ba","ぱ":"pa","ひ":"çi","び":"bʲi","ぴ":"pʲi","ふ":"ɸɯ","ぶ":"bɯ","ぷ":"pɯ","へ":"he","べ":"be","ぺ":"pe","ほ":"ho","ぼ":"bo","ぽ":"po","ま":"ma","み":"mʲi","む":"mɯ","め":"me","も":"mo","ゃ":"ja","や":"ja","ゅ":"jɯ","ゆ":"jɯ","ょ":"jo","よ":"jo","ら":"ɾa","り":"ɾʲi","る":"ɾɯ","れ":"ɾe","ろ":"ɾo","ゎ":"βa","わ":"βa","ゐ":"i","ゑ":"e","を":"o","ゔ":"vɯ","ゕ":"ka","ゖ":"ke","ヷ":"va","ヸ":"vʲi","ヹ":"ve","ヺ":"vo","いぇ":"je","うぃ":"βi","うぇ":"βe","うぉ":"βo","きぇ":"kʲe","きゃ":"kʲa","きゅ":"kʲɨ","きょ":"kʲo","ぎゃ":"ɡʲa","ぎゅ":"ɡʲɨ","ぎょ":"ɡʲo","くぁ":"kᵝa","くぃ":"kᵝi","くぇ":"kᵝe","くぉ":"kᵝo","ぐぁ":"ɡᵝa","ぐぃ":"ɡᵝi","ぐぇ":"ɡᵝe","ぐぉ":"ɡᵝo","しぇ":"ɕe","しゃ":"ɕa","しゅ":"ɕɨ","しょ":"ɕo","じぇ":"ʥe","じゃ":"ʥa","じゅ":"ʥɨ","じょ":"ʥo","ちぇ":"ʨe","ちゃ":"ʨa","ちゅ":"ʨɨ","ちょ":"ʨo","ぢゃ":"ʥa","ぢゅ":"ʥɨ","ぢょ":"ʥo","つぁ":"ʦa","つぃ":"ʦʲi","つぇ":"ʦe","つぉ":"ʦo","てぃ":"tʲi","てゅ":"tʲɨ","でぃ":"dʲi","でゅ":"dʲɨ","とぅ":"tɯ","どぅ":"dɯ","にぇ":"ɲe","にゃ":"ɲa","にゅ":"ɲɨ","にょ":"ɲo","ひぇ":"çe","ひゃ":"ça","ひゅ":"çɨ","ひょ":"ço","びゃ":"bʲa","びゅ":"bʲɨ","びょ":"bʲo","ぴゃ":"pʲa","ぴゅ":"pʲɨ","ぴょ":"pʲo","ふぁ":"ɸa","ふぃ":"ɸʲi","ふぇ":"ɸe","ふぉ":"ɸo","ふゅ":"ɸʲɨ","ふょ":"ɸʲo","みゃ":"mʲa","みゅ":"mʲɨ","みょ":"mʲo","りゃ":"ɾʲa","りゅ":"ɾʲɨ","りょ":"ɾʲo","ゔぁ":"va","ゔぃ":"vʲi","ゔぇ":"ve","ゔぉ":"vo","ゔゅ":"bʲɨ","ゔょ":"bʲo","。":".","、":",","？":"?","！":"!","「":"“","」":"”","『":"“","』":"”","：":":","；":";","（":"(","）":")","《":"(","》":")","【":"[","】":"]","・":" ","，":",","～":"—","〜":"—","—":"—","«":"“","»":"”","゚":"","゙":""},
+  EXT: {"ㇰ":"ク","ㇱ":"シ","ㇲ":"ス","ㇳ":"ト","ㇴ":"ヌ","ㇵ":"ハ","ㇶ":"ヒ","ㇷ":"フ","ㇸ":"ヘ","ㇹ":"ホ","ㇺ":"ム","ㇻ":"ラ","ㇼ":"リ","ㇽ":"ル","ㇾ":"レ","ㇿ":"ロ"},
+  VOCAB: {";":1,":":2,",":3,".":4,"!":5,"?":6,"—":9,"…":10,"\"":11,"(":12,")":13,"“":14,"”":15," ":16,"̃":17,"ʣ":18,"ʥ":19,"ʦ":20,"ʨ":21,"ᵝ":22,"ꭧ":23,"A":24,"I":25,"O":31,"Q":33,"S":35,"T":36,"W":39,"Y":41,"ᵊ":42,"a":43,"b":44,"c":45,"d":46,"e":47,"f":48,"h":50,"i":51,"j":52,"k":53,"l":54,"m":55,"n":56,"o":57,"p":58,"q":59,"r":60,"s":61,"t":62,"u":63,"v":64,"w":65,"x":66,"y":67,"z":68,"ɑ":69,"ɐ":70,"ɒ":71,"æ":72,"β":75,"ɔ":76,"ɕ":77,"ç":78,"ɖ":80,"ð":81,"ʤ":82,"ə":83,"ɚ":85,"ɛ":86,"ɜ":87,"ɟ":90,"ɡ":92,"ɥ":99,"ɨ":101,"ɪ":102,"ʝ":103,"ɯ":110,"ɰ":111,"ŋ":112,"ɳ":113,"ɲ":114,"ɴ":115,"ø":116,"ɸ":118,"θ":119,"œ":120,"ɹ":123,"ɾ":125,"ɻ":126,"ʁ":128,"ɽ":129,"ʂ":130,"ʃ":131,"ʈ":132,"ʧ":133,"ʊ":135,"ʋ":136,"ʌ":138,"ɣ":139,"ɤ":140,"χ":142,"ʎ":143,"ʒ":147,"ʔ":148,"ˈ":156,"ˌ":157,"ː":158,"ʰ":162,"ʲ":164,"↓":169,"→":171,"↗":172,"↘":173,"ᵻ":177},
+  SUTE: 'ゃゅょぁぃぅぇぉ',
+  DIGITS: ['ぜろ', 'いち', 'に', 'さん', 'よん', 'ご', 'ろく', 'なな', 'はち', 'きゅう'],
+  /** A whole number in kana: 2025 → にせんにじゅうご (with the sound changes: さんびゃく, ろっぴゃく, はっせん…). */
+  num(s) {
+    s = String(s).replace(/^0+(?=\d)/, '');
+    if (/\./.test(s)) { const [a, b] = s.split('.'); return this.num(a || '0') + 'てん' + Array.from(b).map(d => this.DIGITS[+d]).join(''); }
+    if (s.length > 16) return Array.from(s).map(d => this.DIGITS[+d]).join('');
+    if (+s === 0) return 'ぜろ';
+    const four = n => {   // 1..9999
+      const th = Math.floor(n / 1000), hu = Math.floor(n / 100) % 10, te = Math.floor(n / 10) % 10, on = n % 10;
+      let o = '';
+      if (th) o += th === 1 ? 'せん' : th === 3 ? 'さんぜん' : th === 8 ? 'はっせん' : this.DIGITS[th] + 'せん';
+      if (hu) o += hu === 1 ? 'ひゃく' : hu === 3 ? 'さんびゃく' : hu === 6 ? 'ろっぴゃく' : hu === 8 ? 'はっぴゃく' : this.DIGITS[hu] + 'ひゃく';
+      if (te) o += (te === 1 ? '' : this.DIGITS[te]) + 'じゅう';
+      if (on) o += this.DIGITS[on];
+      return o;
+    };
+    const units = ['', 'まん', 'おく', 'ちょう'];
+    let out = '', n = s;
+    for (let u = 0; n.length; u++) {
+      const part = +n.slice(-4); n = n.slice(0, -4);
+      if (!part) continue;
+      let w = four(part);
+      if (u && part === 1000) w = 'いっせん';                 // 一千万
+      if (u === 3 && part === 1) w = 'いっ'; else if (u === 3 && part % 10 === 8 && part < 10) w = 'はっ';
+      out = w + units[u] + out;
+    }
+    return out;
+  },
+  /** Counters read with their number (3本 さんぼん, 20日 はつか); the rest: the number, then the counter's usual reading. */
+  COUNT: { 年: 'ねん', 月: 'がつ', 日: 'にち', 時: 'じ', 分: 'ふん', 秒: 'びょう', 円: 'えん', 人: 'にん', 回: 'かい', 歳: 'さい', 才: 'さい', 個: 'こ', 本: 'ほん', 枚: 'まい',
+    度: 'ど', 番: 'ばん', 階: 'かい', 週: 'しゅう', 倍: 'ばい', 位: 'い', 点: 'てん', 冊: 'さつ', 匹: 'ひき', 杯: 'はい', 号: 'ごう', 名: 'めい', 曲: 'きょく', 話: 'わ', 期: 'き' },
+  SPECIAL: { '1人': 'ひとり', '2人': 'ふたり', '4人': 'よにん', '4時': 'よじ', '7時': 'しちじ', '9時': 'くじ', '4月': 'しがつ', '7月': 'しちがつ', '9月': 'くがつ', '20歳': 'はたち',
+    '1日': 'ついたち', '2日': 'ふつか', '3日': 'みっか', '4日': 'よっか', '5日': 'いつか', '6日': 'むいか', '7日': 'なのか', '8日': 'ようか', '9日': 'ここのか', '10日': 'とおか', '14日': 'じゅうよっか', '20日': 'はつか', '24日': 'にじゅうよっか',
+    '1分': 'いっぷん', '3分': 'さんぷん', '4分': 'よんぷん', '6分': 'ろっぷん', '8分': 'はっぷん', '10分': 'じゅっぷん', '1本': 'いっぽん', '3本': 'さんぼん', '6本': 'ろっぽん', '8本': 'はっぽん', '10本': 'じゅっぽん',
+    '1匹': 'いっぴき', '3匹': 'さんびき', '6匹': 'ろっぴき', '8匹': 'はっぴき', '10匹': 'じゅっぴき', '1杯': 'いっぱい', '3杯': 'さんばい', '6杯': 'ろっぱい', '8杯': 'はっぱい', '10杯': 'じゅっぱい',
+    '1個': 'いっこ', '6個': 'ろっこ', '8個': 'はっこ', '10個': 'じゅっこ', '1回': 'いっかい', '6回': 'ろっかい', '8回': 'はっかい', '10回': 'じゅっかい', '1歳': 'いっさい', '8歳': 'はっさい', '10歳': 'じゅっさい',
+    '1冊': 'いっさつ', '8冊': 'はっさつ', '10冊': 'じゅっさつ', '1点': 'いってん', '8点': 'はってん', '10点': 'じゅってん', '3階': 'さんがい', '1階': 'いっかい', '6階': 'ろっかい', '8階': 'はっかい', '10階': 'じゅっかい', '1週': 'いっしゅう' },
+  normalize(t) {
+    t = String(t || '').replace(/[〜～](?=\d)/g, 'から');
+    for (const k in this.EXT) t = t.split(k).join(this.EXT[k]);
+    t = t.normalize('NFKC');
+    // a number, with its counter, becomes one katakana word as it is said: 2025年 → ニセンニジューゴネン
+    const said = h => JP.toKata(h.replace(/([ゅょ])う/g, '$1ー').replace(/([こそとのほもよろごぞどぼぽ])う/g, '$1ー').replace(/えい/g, 'えー'));
+    return t.replace(/(\d+(?:\.\d+)?)([年月日時分秒円人回歳才個本枚度番階週倍位点冊匹杯号名曲話期])?/g, (m, n, c) => {
+      const k = this.SPECIAL[n.replace(/^0+(?=\d)/, '') + (c || '')];
+      return ' ' + said(k || this.num(n) + (c ? this.COUNT[c] : '')) + ' ';
+    });
+  },
+  dakuten(k) { const i = 'かきくけこさしすせそたちつてとはひふへほ'.indexOf(k); return i === -1 ? null : 'がぎぐげござじずぜぞだぢづでどばびぶべぼ'[i]; },
+  /** One kana, seeing its neighbours (misaki cutlet's _get_single_mapping). */
+  one(pk, kk, nk) {
+    const T = this.T;
+    if ('〃々ゝゞヽヾ'.indexOf(kk) !== -1) {
+      if (kk === 'ゝ' || kk === 'ヽ') return pk && T[pk] ? T[pk] : '';
+      if (kk === 'ゞ' || kk === 'ヾ') { const v = pk && this.dakuten(pk); return v ? T[v] : ''; }
+      return '';
+    }
+    if (pk && T[pk + kk] != null) return T[pk + kk];
+    if (nk && T[kk + nk] != null) return '';
+    if (nk && this.SUTE.indexOf(nk) !== -1) { if (kk === 'っ') return ''; return (T[kk] || '').slice(0, -1) + (T[nk] || ''); }
+    if (this.SUTE.indexOf(kk) !== -1) return '';
+    if (kk === 'ー') return 'ː';
+    if (kk === 'っ') return 'ʔ';
+    if (kk === 'ん') {
+      const t = nk && T[nk];
+      if (t) {
+        if ('mpb'.indexOf(t[0]) !== -1) return 'm';
+        if ('kɡ'.indexOf(t[0]) !== -1) return 'ŋ';
+        if (/^(ɲ|ʨ|ʥ)/.test(t)) return 'ɲ';
+        if ('ntdɾz'.indexOf(t[0]) !== -1) return 'n';
+      }
+      return 'ɴ';
+    }
+    return T[kk] || '';
+  },
+  word(hira) { let o = ''; for (let i = 0; i < hira.length; i++) o += this.one(i ? hira[i - 1] : null, hira[i], i < hira.length - 1 ? hira[i + 1] : null); return o; },
+  /** Japanese text → Kokoro's phonemes. Needs the dictionary (Analyzer.tk). Endings join their verb, as in
+      misaki's word list: 行きます → ikʲimasɨ, 呼んで → jonde, 行こう → ikoː. */
+  phonemes(text) {
+    text = this.normalize(text);
+    const toks = Analyzer.tk.tokenize(text), words = [];
+    let prev = null;
+    for (const t of toks) {
+      const surf = t.surface_form, w = words[words.length - 1];
+      if (/^[\x00-\x7f]*$/.test(surf)) { words.push({ surf, roma: surf }); prev = null; continue; }
+      if (t.pos === '記号') { words.push({ surf, roma: Array.from(surf).map(c => this.T[c] != null ? this.T[c] : c).join('') }); prev = null; continue; }
+      let p = t.pronunciation && t.pronunciation !== '*' ? t.pronunciation : t.reading && t.reading !== '*' ? t.reading : surf;
+      if (t.pos !== '動詞') {
+        p = p.replace(/([エケセテネヘメレゲゼデベペェ])イ/g, '$1ー');                                  // 先生 センセイ is said センセー
+        if (t.pos === '形容詞' || /[一-鿿々]/.test(surf) || surf === 'いい') p = p.replace(/([イキシチニヒミリギジヂビピィ])イ$/, '$1ー');   // 楽しい タノシー
+      }
+      let hira = JP.toHira(p);
+      const ending = prev && w && w.hira != null && ((t.pos === '助動詞' && !/^(です|だ)$/.test(t.basic_form) && /^(動詞|助動詞|形容詞)$/.test(prev.pos)) || (t.pos === '助詞' && t.pos_detail_1 === '接続助詞' && /^[てで]$/.test(surf) && /^(動詞|助動詞|形容詞)$/.test(prev.pos)));
+      if (ending) {
+        if (t.pos === '助動詞' && surf === 'う' && /[おこそとのほもよろをごぞどぼぽょぉ]$/.test(w.hira)) hira = 'ー';   // ましょ+う: maɕoː
+        w.hira += hira; w.surf += surf;
+      } else words.push({ surf, hira });
+      prev = t;
+    }
+    const out = [];
+    for (const w of words) {
+      const roma = w.hira != null ? this.word(w.hira) : w.roma, surf = w.surf;
+      const tok = { s: roma, sp: false }, po = out[out.length - 1];
+      if ('「『«'.indexOf(surf) !== -1 || '(['.indexOf(roma) !== -1) { if (po) po.sp = true; }
+      else if ('」』»'.indexOf(surf) !== -1 || ']).,?!:'.indexOf(roma) !== -1) { if (po) po.sp = false; tok.sp = true; }
+      else if (roma === ' ') tok.sp = false;
+      else tok.sp = true;
+      out.push(tok);
+    }
+    const ps = out.map(t => t.s + (t.sp ? ' ' : '')).join('').trim().replace(/\s+/g, ' ').replace(/\(/g, '«').replace(/\)/g, '»');
+    return ps.replace(/(?<![!",.:;?»—…”]) (?=ʔ)|(?<=ʔ) (?!["«“])/g, '');
+  },
+  ids(ps) { const o = []; for (const c of ps) { const v = this.VOCAB[c]; if (v != null) o.push(v); } return o; }
+};
+
+const Kokoro = {
+  REPO: 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/',
+  MODEL: 'onnx/model_quantized.onnx',
+  WASM: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.wasm',
+  MB: 108,
+  VOICES: [['jf_alpha', 'Alpha', 'a woman, the clearest'], ['jf_gongitsune', 'Gongitsune', 'a woman reading a story'], ['jf_tebukuro', 'Tebukuro', 'a woman reading a story'],
+    ['jf_nezumi', 'Nezumi', 'a woman reading a story'], ['jm_kumo', 'Kumo', 'a man']],
+  RATE: 24000,
+  state: 'none', progress: 0, err: '', installed: false, session: null, _db: null, _voices: new Map(), _cache: new Map(), _gen: 0,
+  allowed() { return BUILD.local && typeof indexedDB !== 'undefined' && typeof WebAssembly !== 'undefined'; },
+  voice() { const v = Game.p && Game.p.settings.kokoroVoice; return this.VOICES.some(x => x[0] === v) ? v : 'jf_alpha'; },
+
+  /* --- its own small database, so removing it is one step --- */
+  db() {
+    if (!this._db) this._db = new Promise((res, rej) => {
+      const rq = indexedDB.open('kotonoha-voice', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('files');
+      rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); rq.onblocked = () => rej(new Error('blocked'));
+    });
+    return this._db;
+  },
+  async get(k) { const db = await this.db(); return new Promise(res => { const rq = db.transaction('files').objectStore('files').get(k); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }); },
+  async put(k, v) { const db = await this.db(); return new Promise((res, rej) => { const tx = db.transaction('files', 'readwrite'); tx.objectStore('files').put(v, k); tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error || new Error('could not save')); }); },
+  async init() {
+    if (!this.allowed()) return;
+    try { const m = await this.get('ready'); this.installed = !!(m && m.v === 1); if (this.installed) this.state = 'ready'; } catch (e) {}
+    Bus.emit('kokoro', this.state);
+  },
+
+  /** Download what it needs once: the voice model (Hugging Face), the WebAssembly runtime (jsDelivr) and one voice. */
+  async install() {
+    if (this.state === 'downloading') return;
+    this.state = 'downloading'; this.progress = 0; this.err = ''; Bus.emit('kokoro', this.state);
+    try {
+      const parts = [['wasm', this.WASM, 15], ['model', this.REPO + this.MODEL, 92], ['voice:' + this.voice(), this.REPO + 'voices/' + this.voice() + '.bin', 0.5]];
+      const total = parts.reduce((a, p) => a + p[2], 0); let done = 0;
+      for (const [key, url, mb] of parts) {
+        if (!(await this.get(key))) await this.put(key, await this.fetchBytes(url, f => { this.progress = (done + f * mb) / total; Bus.emit('kokoro', this.state); }));
+        done += mb;
+      }
+      this.state = 'loading'; Bus.emit('kokoro', this.state);
+      await this.load();
+      await this.put('ready', { v: 1, at: now() });
+      this.installed = true; this.state = 'ready'; this.progress = 1;
+    } catch (e) {
+      console.warn('Kokoro', e);
+      this.state = 'error'; this.err = navigator.onLine === false ? 'You are offline. Connect once to download the voice.' : String((e && e.message) || e).slice(0, 200);
+    }
+    Bus.emit('kokoro', this.state); Bus.emit('voice-ready');
+  },
+  async fetchBytes(url, onProgress) {
+    const r = await fetch(url, { mode: 'cors', credentials: 'omit' });
+    if (!r.ok) throw new Error('Download failed (' + r.status + ') for ' + url.split('/').pop());
+    const size = +r.headers.get('content-length') || 0;
+    if (!r.body || !r.body.getReader) { const b = await r.arrayBuffer(); onProgress(1); return b; }
+    const rd = r.body.getReader(), chunks = []; let got = 0;
+    for (;;) { const { done, value } = await rd.read(); if (done) break; chunks.push(value); got += value.length; if (size) onProgress(Math.min(1, got / size)); }
+    const out = new Uint8Array(got); let at = 0; for (const c of chunks) { out.set(c, at); at += c.length; }
+    onProgress(1);
+    return out.buffer;
+  },
+  async remove() {
+    try { this.session && this.session.release && await this.session.release(); } catch (e) {}
+    this.session = null; this._loading = null; this._voices.clear(); this._cache.clear(); this.installed = false; this.state = 'none';
+    try { const db = await this.db(); db.close(); } catch (e) {}
+    this._db = null;
+    await new Promise(res => { try { const rq = indexedDB.deleteDatabase('kotonoha-voice'); rq.onsuccess = rq.onerror = rq.onblocked = () => res(); } catch (e) { res(); } });
+    Bus.emit('kokoro', this.state); Bus.emit('voice-ready');
+  },
+
+  /* --- running it --- */
+  _ort() {
+    if (window.ort && window.ort.InferenceSession) return Promise.resolve(window.ort);
+    if (!this._lib) this._lib = Offline._script(Offline.BASE + 'ort.js').then(() => { if (!window.ort) throw new Error('data/ort.js did not load'); return window.ort; });
+    return this._lib;
+  },
+  load() {
+    if (this.session) return Promise.resolve(this.session);
+    if (!this._loading) this._loading = (async () => {
+      const ort = await this._ort();
+      const [wasm, model] = await Promise.all([this.get('wasm'), this.get('model')]);
+      if (!wasm || !model) throw new Error('The voice is not downloaded yet.');
+      ort.env.wasm.numThreads = 1; ort.env.wasm.proxy = false; ort.env.wasm.wasmBinary = wasm;
+      this.session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+      return this.session;
+    })().catch(e => { this._loading = null; throw e; });
+    return this._loading;
+  },
+  async voiceData(id) {
+    if (this._voices.has(id)) return this._voices.get(id);
+    let b = await this.get('voice:' + id);
+    if (!b) { b = await this.fetchBytes(this.REPO + 'voices/' + id + '.bin', () => {}); await this.put('voice:' + id, b); }
+    const f = new Float32Array(b);
+    this._voices.set(id, f);
+    return f;
+  },
+  /** Pieces of at most ~400 phonemes, cut at sentence ends, then commas. */
+  pieces(ps) {
+    if (ps.length <= 400) return [ps];
+    const out = [];
+    let cur = '';
+    for (const part of ps.split(/(?<=[.!?…])\s+/)) {
+      if ((cur + ' ' + part).length > 400 && cur) { out.push(cur); cur = ''; }
+      if (part.length > 400) { for (const c of part.split(/(?<=,)\s+/)) { if ((cur + ' ' + c).length > 400 && cur) { out.push(cur); cur = ''; } cur = cur ? cur + ' ' + c.slice(0, 480) : c.slice(0, 480); } }
+      else cur = cur ? cur + ' ' + part : part;
+    }
+    if (cur) out.push(cur);
+    return out;
+  },
+  /** The sound of a text: Float32Array at 24 kHz. Kept for a while, so a line heard again starts at once. */
+  async audio(text, speed) {
+    const v = this.voice(), sp = Math.round(clamp(speed || 1, 0.5, 2) * 100) / 100, key = v + '|' + sp + '|' + text;
+    if (this._cache.has(key)) { const a = this._cache.get(key); this._cache.delete(key); this._cache.set(key, a); return a; }
+    if (!Offline.ready()) await Offline.load();
+    const [s, vd] = await Promise.all([this.load(), this.voiceData(v)]);
+    const ort = window.ort, parts = [];
+    for (const ps of this.pieces(KG2P.phonemes(text))) {
+      const ids = KG2P.ids(ps).slice(0, 509);
+      if (!ids.length) continue;
+      const n = ids.length, input = new BigInt64Array(n + 2);
+      ids.forEach((x, i) => { input[i + 1] = BigInt(x); });
+      const feeds = {};
+      feeds[s.inputNames.indexOf('input_ids') !== -1 ? 'input_ids' : 'tokens'] = new ort.Tensor('int64', input, [1, n + 2]);
+      feeds.style = new ort.Tensor('float32', vd.slice(n * 256, n * 256 + 256), [1, 256]);
+      feeds.speed = new ort.Tensor('float32', new Float32Array([sp]), [1]);
+      const r = await (this._run = (this._run || Promise.resolve()).catch(() => {}).then(() => s.run(feeds)));   // one at a time
+      parts.push(r[s.outputNames[0]].data);
+    }
+    const gap = Math.round(this.RATE * 0.12), len = parts.reduce((a, p) => a + p.length, 0) + gap * Math.max(0, parts.length - 1);
+    const out = new Float32Array(len); let at = 0;
+    parts.forEach((p, i) => { out.set(p, at); at += p.length + (i < parts.length - 1 ? gap : 0); });
+    this._cache.set(key, out); if (this._cache.size > 40) this._cache.delete(this._cache.keys().next().value);
+    return out;
+  },
+  ctx() { if (!this._ctx) { const C = window.AudioContext || window.webkitAudioContext; this._ctx = new C(); } if (this._ctx.state === 'suspended') this._ctx.resume().catch(() => {}); return this._ctx; },
+  sentences(text) { return String(text || '').split(/(?<=[。！？!?…])\s*/).map(x => x.trim()).filter(Boolean); },
+  /** Say it, sentence by sentence: the first is heard while the next is being made. True when heard, false when stopped or failed. */
+  async speak(text, speed) {
+    const my = ++this._gen;
+    const ctx = this.ctx();                                   // made inside the click, so the browser lets it play
+    const parts = this.sentences(text);
+    let next = parts.length ? this.audio(parts[0], speed) : null;
+    for (let i = 0; i < parts.length; i++) {
+      let a;
+      try { a = await next; } catch (e) { console.warn('Kokoro', e); if (!this._toldAt || now() - this._toldAt > 20000) { this._toldAt = now(); toast('The voice on this device could not speak: ' + String(e.message || e).slice(0, 80)); } return false; }
+      if (my !== this._gen) return false;
+      next = i + 1 < parts.length ? this.audio(parts[i + 1], speed) : null;
+      if (next) next.catch(() => {});
+      if (a.length && !(await this.play(a, ctx, my))) return false;
+      if (my !== this._gen) return false;
+    }
+    return parts.length > 0;
+  },
+  play(a, ctx, my) {
+    ctx = ctx || this.ctx();
+    const buf = ctx.createBuffer(1, a.length, this.RATE); buf.copyToChannel(a, 0);
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+    return new Promise(res => {
+      let done = false; const fin = ok => { if (done) return; done = true; if (this._src === src) this._src = null; res(ok); };
+      src.onended = () => fin(my === this._gen);
+      this._src = src; this._fin = fin;
+      try { src.start(); } catch (e) { fin(false); }
+      setTimeout(() => fin(my === this._gen), a.length / this.RATE * 1000 + 1500);
+    });
+  },
+  stop() { this._gen++; const s = this._src, f = this._fin; this._src = null; try { if (s) s.stop(); } catch (e) {} if (f) f(false); },
+
+  section() {
+    if (!this.allowed()) return null;
+    const box = h('div.kokoro-box');
+    const draw = () => {
+      if (!box.isConnected && box._drawn) { off(); return; }
+      box._drawn = true;
+      const st = this.state;
+      // the Voice list above follows: Kokoro can be chosen once it is here
+      const sel = document.getElementById('set-voice'), has = sel && Array.from(sel.options).find(o => o.value === 'kokoro');
+      if (sel && this.installed && !has) sel.insertBefore(h('option', { value: 'kokoro' }, 'Kokoro (on this device)'), sel.querySelector('option[value="off"]'));
+      if (sel && !this.installed && has) has.remove();
+      mount(box,
+        h('p.fine', this.installed ? 'A natural-sounding Japanese voice that runs on this device, also offline. It is used when the browser has no Japanese voice (or none that works offline). Edge’s Nanami still sounds more native when you are online.'
+          : 'No Japanese voice in this browser, or none that works offline? Download Kokoro, a voice that runs on this device (about ' + this.MB + ' MB, once).'),
+        st === 'downloading' ? h('div.kokoro-prog', meter(this.progress), h('span.fine', 'Downloading… ' + Math.round(this.progress * 100) + '%')) : null,
+        st === 'loading' ? h('p.fine', h('span.spin'), ' Starting the voice…') : null,
+        st === 'error' ? h('p.notice.bad', 'The voice could not be set up: ' + this.err) : null,
+        this.installed ? h('div.field', h('label', { for: 'set-kvoice' }, 'Kokoro voice'), h('select#set-kvoice', { onchange: e => { Game.p.settings.kokoroVoice = e.target.value; Game.touch(); this._cache.clear(); } },
+          this.VOICES.map(v => h('option', { value: v[0], selected: this.voice() === v[0] }, v[1] + ' (' + v[2] + ')')))) : null,
+        h('div.btn-row',
+          !this.installed && st !== 'downloading' && st !== 'loading' ? btn(st === 'error' ? 'Try again' : 'Download the voice (' + this.MB + ' MB)', { cls: 'small primary', icon: 'download', onclick: () => this.install() }) : null,
+          this.installed ? btn('Listen', { cls: 'small', icon: 'speaker', onclick: () => { Voice.stop(); Bus.emit('speaking', true); this.speak('こんにちは。コトハナです。今日も一緒に、ゆっくり頑張りましょう。', 0.95).finally(() => Bus.emit('speaking', false)); } }) : null,
+          this.installed ? btn('Remove', { cls: 'small ghost', onclick: () => this.remove() }) : null));
+    };
+    const off = Bus.on('kokoro', draw);
+    draw();
+    return h('div.field-block', h('h4', duo('声', 'Kokoro, a voice on this device')), box);
+  }
+};
+
+/* ===== 52-maker.js ===== */
+/* ---------- 52-maker: a lesson from a song name, a spoken name or a YouTube link ----------
+   One request in, a ready lesson out. The pipeline:
+     1. understand the request: a YouTube link (its title, channel and length), an animesonglyrics page, or words
+        ("紅蓮華", "Gurenge by LiSA", "Chainsaw Man opening");
+     2. find the song in three places at once: LRCLIB (Japanese lyrics, many with timing), animesonglyrics.com
+        (lyrics and a person's English translation) and YouTube (the music video). Entries are grouped by their
+        lyrics, not their names, so 紅蓮華 and "Gurenge" are recognised as the same song;
+     3. choose the video and the timing together: LRCLIB often holds several timings of one song (album track, TV
+        size, the music video); the one whose length matches the video is used, so the lines follow the video;
+     4. build the lesson, break every line down with the dictionary, write a plan, and attach the learner's own
+        file when their media folder has the song. Missing translations are left to Kotohana, in the background.
+   Videos are never downloaded: they stream from YouTube. Results are cached on this device for a few days. */
+'use strict';
+
+/* ----- polite fetching with a cache kept outside the save ----- */
+const Net = {
+  DAY: 86400000,
+  async cached(key, ttl, fn) {
+    try { const c = await Idb.kvGet('net:' + key); if (c && c.at && Date.now() - c.at < ttl && c.v != null) return c.v; } catch (e) {}
+    const v = await fn();
+    if (v != null) { try { Idb.kvSet('net:' + key, { at: Date.now(), v }); } catch (e) {} }
+    return v;
+  },
+  async json(url, ms) {
+    const text = await Web.get(url, {}, ms || 15000);
+    try { return JSON.parse(text); } catch (e) { throw new Error('not JSON'); }
+  }
+};
+
+/* ----- YouTube, without an API key ----- */
+const YT = {
+  /** A YouTube link's video and start time, or null. */
+  parseLink(s) {
+    s = String(s || '').trim();
+    const m = /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*&)?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([\w-]{11})/i.exec(s);
+    if (!m) return null;
+    let start = 0;
+    const t = /[?&#](?:t|start)=([0-9hms]+)/i.exec(s);
+    if (t) {
+      const v = t[1];
+      if (/^\d+$/.test(v)) start = +v;
+      else { const hh = /(\d+)h/.exec(v), mm = /(\d+)m/.exec(v), ss = /(\d+)s/.exec(v); start = (hh ? +hh[1] * 3600 : 0) + (mm ? +mm[1] * 60 : 0) + (ss ? +ss[1] : 0); }
+    }
+    return { id: m[1], start };
+  },
+  clock(s) { const p = String(s || '').trim().split(':').map(Number); if (!p.length || p.some(isNaN)) return 0; return p.reduce((a, b) => a * 60 + b, 0); },
+  num(s) { const m = /([\d,.]+)\s*([KMB])?/i.exec(String(s || '').replace(/\s+views?$/i, '')); if (!m) return 0; const k = { K: 1e3, M: 1e6, B: 1e9 }[String(m[2] || '').toUpperCase()] || 1; return Math.round(parseFloat(m[1].replace(/,/g, '')) * k) || 0; },
+  /** The JSON object that follows a marker in a page (ytInitialData, ytInitialPlayerResponse). */
+  objectAfter(html, marker) {
+    const i = html.indexOf(marker); if (i < 0) return null;
+    const s = html.indexOf('{', i); if (s < 0) return null;
+    let depth = 0, inStr = false, esc = false, j = s;
+    for (; j < html.length; j++) {
+      const c = html[j];
+      if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; }
+      else if (c === '"') inStr = true; else if (c === '{') depth++; else if (c === '}') { depth--; if (!depth) break; }
+    }
+    try { return JSON.parse(html.slice(s, j + 1)); } catch (e) { return null; }
+  },
+  runs(x) { return x ? (x.simpleText || (x.runs || []).map(r => r.text).join('')) : ''; },
+  views(n) { return n >= 1e9 ? (n / 1e9).toFixed(1) + 'B views' : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M views' : n >= 1e3 ? Math.round(n / 1e3) + 'K views' : n + ' views'; },
+  /** Videos on a results page. */
+  parseResults(html) {
+    const data = this.objectAfter(html, 'ytInitialData'), out = [], seen = new Set();
+    const walk = o => {
+      if (!o || typeof o !== 'object' || out.length >= 20) return;
+      if (o.videoRenderer && o.videoRenderer.videoId && !seen.has(o.videoRenderer.videoId)) {
+        const v = o.videoRenderer; seen.add(v.videoId);
+        out.push({ id: v.videoId, title: this.runs(v.title), channel: this.runs(v.ownerText || v.longBylineText || v.shortBylineText),
+          duration: this.clock(v.lengthText && v.lengthText.simpleText), views: this.num(this.runs(v.viewCountText)), live: !v.lengthText });
+        return;
+      }
+      for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k]);
+    };
+    if (data) walk(data);
+    if (!out.length) for (const m of String(html).matchAll(/watch\?v=([\w-]{11})/g)) if (!seen.has(m[1]) && out.length < 12) { seen.add(m[1]); out.push({ id: m[1], title: '', channel: '', duration: 0, views: 0 }); }
+    return out.filter(v => !v.live);
+  },
+  async search(q) {
+    return Net.cached('yts:' + q, 3 * Net.DAY, async () => this.parseResults(await Web.html('https://www.youtube.com/results?search_query=' + encodeURIComponent(q), { nocache: true })));
+  },
+  /** A video's title, channel and length: the oEmbed answer is quick; the watch page (through the reader) has the length. */
+  async info(id) {
+    return Net.cached('yt:' + id, 30 * Net.DAY, async () => {
+      const url = 'https://www.youtube.com/watch?v=' + id, out = { id, title: '', channel: '', duration: 0 };
+      const [oe, page] = await Promise.allSettled([
+        Net.json('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(url)).catch(() => Net.json('https://noembed.com/embed?url=' + encodeURIComponent(url))),
+        Web.html(url, { nocache: true })
+      ]);
+      if (oe.status === 'fulfilled' && oe.value && !oe.value.error) { out.title = oe.value.title || ''; out.channel = oe.value.author_name || ''; }
+      if (page.status === 'fulfilled') {
+        const html = page.value, pr = this.objectAfter(html, 'ytInitialPlayerResponse'), vd = pr && pr.videoDetails;
+        if (vd) { out.title = out.title || vd.title || ''; out.channel = out.channel || vd.author || ''; out.duration = +vd.lengthSeconds || 0; }
+        if (!out.duration) { const m = /"lengthSeconds":"(\d+)"/.exec(html); if (m) out.duration = +m[1]; }
+        if (!out.title) { const m = /<title>([^<]*)<\/title>/.exec(html); if (m) out.title = m[1].replace(/\s*-\s*YouTube\s*$/, ''); }
+      }
+      if (!out.title && !out.duration) throw new Error('YouTube did not say what this video is');
+      return out;
+    });
+  }
+};
+
+/* ----- names and lyrics across scripts ----- */
+const Names = {
+  /** Words around a song's name in video titles that are not the name. */
+  NOISE: /\b(?:official\s*(?:music\s*)?video|official\s*audio|music\s*video|music\s*clip|lyrics?\s*video|lyric|lyrics|full\s*ver(?:sion)?|tv\s*(?:size|ver(?:sion)?)|creditless|non[- ]?credit|clean|hd|hq|4k|1080p|mv|pv|eng\s*sub(?:bed)?|english\s*sub(?:titles?)?|romaji|kan\/rom\/eng|audio|official(?![぀-ヿ一-鿿])|ver\.?)\b|歌詞付き|歌詞|ノンクレジット|公式|フル|ＭＶ|ＰＶ|ミュージックビデオ|ＴＶサイズ|TVサイズ/gi,
+  /** A version that is not the studio recording: lines will not keep time with LRCLIB. */
+  VERSION: /cover|歌ってみた|弾いてみた|叩いてみた|踊ってみた|piano|ピアノ|instrumental|inst\.?\b|off\s*vocal|karaoke|カラオケ|remix|nightcore|slowed|sped\s*up|reverb|8d\b|live|ライブ|first\s*take|acoustic|アコースティック|orchestra|オーケストラ|music\s*box|オルゴール|reaction|tutorial|guitar|ギター|bass|drum|ドラム|メドレー|medley|mashup|english\s*ver|英語/i,
+  clean(s) { return String(s || '').normalize('NFKC').replace(/\s+/g, ' ').trim(); },
+  isNoise(s) { return new RegExp(this.NOISE.source, 'i').test(s); },
+  stripNoise(s) { return String(s || '').replace(new RegExp(this.NOISE.source, 'gi'), ' '); },
+  /** Channels that upload anime openings but are not the singer. */
+  NOT_ARTIST: /crunchyroll|aniplex|toho|netflix|mappa|muse\s*asia|ani-?one|animelab|funimation|tv\s*tokyo|テレビ東京|toei|kadokawa|pony\s*canyon|ポニーキャニオン|sony\s*music|avex|lantis|king\s*records|warner|universal|bandai|flying\s*dog|nbcuniversal|ufotable|anime|アニメ|lyrics?|歌詞|subs?\b|the first take/i,
+  /** A channel name without the words around the artist (LiSA Official YouTube -> LiSA, Aimer - Topic -> Aimer). */
+  channel(c) {
+    c = this.clean(c).replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '');
+    c = c.replace(/(^|\s)(official\s*(youtube\s*)?(channel)?|youtube\s*channel|youtube|channel|music|records?|公式チャンネル|公式)(?=\s|$)/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+    const parts = c.split(/\s+(?:and|&|×|x)\s+/i);
+    c = (parts.length > 1 ? parts[parts.length - 1] : c).trim();
+    return this.NOT_ARTIST.test(c) ? '' : c;
+  },
+  /** The anime a video title names (テレビアニメ「鬼滅の刃」, TV anime “Demon Slayer”, [Naruto OP]). */
+  anime(t) {
+    t = this.clean(t);
+    const pats = [/(?:テレビ|TV|ＴＶ)?アニメ(?:ーション)?\s*[「『【]([^」』】]+)[」』】]/i, /劇場版\s*[「『]?([^」』\s（(]+)/, /映画\s*[「『]([^」』]+)[」』]/,
+      /\b(?:TV\s*)?anime\s*[“"'「『]([^”"'」』]+)[”"'」』]/i, /[\[(【]([^\])】]{2,60}?)\s+(?:OP|ED|Opening|Ending)(?:\s*\d+)?\s*(?:theme)?\s*(?:full)?[\])】]/i,
+      /^(.{2,60}?)\s+(?:OP|ED|Opening|Ending)\s*\d*\b/i];
+    for (const p of pats) { const m = p.exec(t); if (m && m[1] && !/^(OP|ED)$/i.test(m[1].trim())) return m[1].replace(/[\s|｜:：\-–—/]+$/, '').replace(/^[\s|｜\-–—/【\[]+/, '').trim(); }
+    return '';
+  },
+  theme(t) {
+    const m = /(オープニング|エンディング|挿入歌|主題歌|\bOP\b|\bED\b|\bOpening\b|\bEnding\b|\bInsert\s*Song\b)\s*(?:テーマ|theme)?\s*#?\s*(\d{1,2})?/i.exec(this.clean(t));
+    if (!m) return null;
+    const k = /^(オープニング|OP|Opening)$/i.test(m[1]) ? 'Opening' : /^(エンディング|ED|Ending)$/i.test(m[1]) ? 'Ending' : /挿入歌|insert/i.test(m[1]) ? 'Insert Song' : 'Theme Song';
+    return { kind: k, n: m[2] ? +m[2] : 0 };
+  },
+  /** Latin words in a title that may be the song's name in romaji (Gurenge, Usseewa). */
+  latin(t, skip) {
+    const s = this.stripNoise(t);
+    const out = [];
+    for (const m of s.matchAll(/[A-Za-z][A-Za-z0-9'’.!? -]{1,40}[A-Za-z0-9!?]/g)) {
+      const w = m[0].trim(); if (w.length < 3) continue;
+      if (skip && skip.some(x => x && this.key(x) && this.key(w) === this.key(x))) continue;
+      if (/^(the first take|music clip|tv anime|opening|ending|theme|feat|from)$/i.test(w)) continue;
+      out.push(w);
+    }
+    return uniq(out);
+  },
+  /** Every quoted name in a title, with the words just before it (Aimer「残響散歌」, OP：キタニタツヤ「青のすみか」). */
+  quotes(t) {
+    const out = [];
+    for (const m of String(t).matchAll(/[『「“"]([^』」”"]{1,60})[』」”"]/g)) {
+      // the name just before the quote: everything back to a separator, so "King Gnu" and "Mrs. GREEN APPLE" stay whole
+      const before = t.slice(0, m.index), seg = before.split(/\s[-–—]\s|[|｜/／:：【】\[\]()（）「」『』“”"]/).pop().trim();
+      const lead = seg && seg.length <= 40 && seg.split(/\s+/).length <= 4 ? seg : (/([^\s「『“"｜|:：/／()（）【】\[\]]+)\s*$/.exec(before) || [])[1] || '';
+      out.push({ q: m[1].trim(), at: m.index, lead, before });
+    }
+    return out;
+  },
+  /** Split a video title into the song, the artist and what it is from. */
+  split(title, channel) {
+    const raw = this.clean(title), ch = this.channel(channel);
+    const anime = this.anime(raw), theme = this.theme(raw), version = (this.VERSION.exec(raw) || [''])[0];
+    let t = raw.replace(/[(（][^)）]*(?:アニメ|anime|\bOP\b|\bED\b|opening|ending|テーマ|theme|主題歌|挿入歌)[^)）]*[)）]/gi, ' ');
+    let artist = '', song = '', romaji = [];
+    let m = /【([^】]{1,30})】/.exec(t);                                            // 【Ado】うっせぇわ
+    if (m && !this.isNoise(m[1]) && !this.VERSION.test(m[1]) && !/アニメ|anime|\bop\b|\bed\b|mv|pv|eng|sub|歌詞|lyric|official/i.test(m[1])) { artist = m[1]; t = t.replace(m[0], ' '); }
+    t = t.replace(/【[^】]*】|\[[^\]]*\]|［[^］]*］/g, ' ');
+    // a quoted name: the one sung by someone named just before it, not the anime or a season's title
+    const qs = this.quotes(t).filter(x => !(anime && this.key(x.q) === this.key(anime)));
+    if (qs.length) {
+      const rank = x => {
+        let r = x.at / 1000;
+        if (/(?:OP|ED|主題歌|オープニング|エンディング|歌|song)\s*[:：]\s*[^「『“"]*$/i.test(x.before)) r += 3;
+        if (/(?:アニメ|劇場版|映画|第\s*\d+\s*期|編|シーズン|season)\s*[「『“"]?\s*$/i.test(x.before) || /編$|期$/.test(x.q)) r -= 3;
+        if (x.lead && !this.isNoise(x.lead) && !/^(mv|pv|tv|ost|op|ed)$/i.test(x.lead)) r += 1;
+        return r;
+      };
+      const best = qs.slice().sort((x, y) => rank(y) - rank(x))[0];
+      song = best.q;
+      if (!artist) {
+        const lead = this.clean(this.stripNoise(best.lead));
+        if (lead && !/アニメ|anime|[|｜]|\bop\b|\bed\b|opening|ending/i.test(lead) && !(anime && this.key(lead) === this.key(anime))) artist = lead;
+      }
+      const by = /\bby\s+([^|｜()（）\[\]【】]+)/i.exec(t.slice(best.at));
+      if (!artist && by) artist = this.clean(this.stripNoise(by[1]));
+    }
+    if (!song) {
+      const flat = this.stripNoise(t);
+      const parts = flat.split(/\s*[|｜]\s*|\s+[-–—／/]\s+|\s*／\s*/).map(s => s.trim()).filter(s => s && !/^(op|ed|opening|ending)\s*\d*$/i.test(s) && !(anime && this.key(s) === this.key(anime)) && !this.theme(s));
+      if (parts.length >= 2) {
+        const [a, b] = parts;
+        // the channel says which is the singer; otherwise "Artist - Title", but "曲名 / 歌手" with a slash
+        const slash = /^\s*[^-–—]*?\s*[／/]\s*/.test(flat) && !/\s[-–—]\s/.test(flat.split(/[／/]/)[0]);
+        const sa = ch ? this.simName(a, ch) : 0, sb = ch ? this.simName(b, ch) : 0;
+        if (Math.max(sa, sb) >= 0.5 ? sb > sa : slash) { song = a; artist = artist || b; } else { artist = artist || a; song = b; }
+      } else song = (parts[0] || '').trim();
+    }
+    const byM = /^(.+?)\s+by\s+(.+)$/i.exec(song);
+    if (byM) { song = byM[1]; artist = artist || byM[2]; }
+    // "Gurenge (紅蓮華)" or "うっせぇわ (Usseewa)": the Japanese is the title, the romaji a second name
+    const pm = /^(.*?)\s*[(（]([^)）]+)[)）]\s*$/.exec(song.trim());
+    if (pm) {
+      const out = pm[1].trim(), inn = pm[2].trim();
+      if (JP.hasJapanese(inn) && !JP.hasJapanese(out) && out) { song = inn; romaji.push(out); }
+      else if (JP.hasJapanese(out) && !JP.hasJapanese(inn) && inn) { song = out; romaji.push(inn); }
+      else song = out || inn;
+    }
+    song = this.clean(this.stripNoise(song).replace(/[(（][^)）]*[)）]/g, ' ').replace(/^["“「『]|["”」』]$/g, '').replace(/\s+[-–—/|]\s*$/, ''));
+    if (anime && this.key(song) === this.key(anime)) song = '';
+    artist = this.clean(this.stripNoise(artist)).replace(/^[\s|｜\-–—:：]+|[\s|｜\-–—:：]+$/g, '');
+    if (!artist && ch) artist = ch;
+    const latin = romaji.concat(this.latin(raw, [artist, ch, anime]).filter(w => this.key(w) !== this.key(song)));
+    return { title: song, artist, anime, theme, version, romaji: uniq(latin) };
+  },
+  /** What a typed or spoken request asks for. */
+  request(text) {
+    let t = this.clean(text);
+    if (/^["'“「『].*["'”」』]$/.test(t)) t = t.slice(1, -1).trim();
+    const out = { text: t, title: '', artist: '', anime: '', theme: null };
+    const th = this.theme(t);
+    if (th) {
+      out.theme = th;
+      const before = t.replace(/\s*(?:の)?\s*(オープニング|エンディング|挿入歌|主題歌|\bOP\b|\bED\b|\bOpening\b|\bEnding\b|\bInsert\s*Song\b)\s*(?:テーマ|theme)?\s*#?\s*\d{0,2}\s*/i, ' ').replace(/\b(the|of)\b/gi, ' ').trim();
+      if (before) out.anime = this.clean(before);
+      return out;
+    }
+    let m = /^(?:(?:the\s+)?(?:best|top|popular)\s+)?(?:songs?|music|tracks?)\s+(?:by|from|of)\s+(.+)$/i.exec(t) || /^(.+?)(?:'s)?\s+(?:songs|tracks|music)$/i.exec(t) || /^(.+?)\s*の\s*(?:曲|歌|うた|楽曲)$/.exec(t);
+    if (m && !/^(?:anime|the|a|my|some|good|best|top|popular)$/i.test(m[1].trim())) { out.artist = m[1].trim(); out.artistOnly = true; return out; }
+    m = /^(.+?)\s+by\s+(.+)$/i.exec(t);
+    if (m) { out.title = m[1].trim(); out.artist = m[2].trim(); return out; }
+    m = /^(.*?)\s*[『「]([^』」]+)[』」]/.exec(t);
+    if (m) { out.title = m[2].trim(); out.artist = m[1].trim(); return out; }
+    m = /^(.+?)\s+[-–—／/]\s+(.+)$/.exec(t);
+    if (m) { out.artist = m[1].trim(); out.title = m[2].trim(); out.swap = true; return out; }
+    return out;
+  },
+  /** A comparison key: Japanese turned into romaji by its reading, everything lower case, no spaces or marks. */
+  key(s) {
+    s = this.clean(s).toLowerCase();
+    if (!s) return '';
+    let r = s;
+    if (JP.hasJapanese(s)) {
+      let kana = '';
+      try { if (Offline.ready()) kana = (Analyzer.line(s, 0).t || []).map(t => /^[ぁ-ゟァ-ヿー]+$/.test(t.s) ? t.s : (t.r || t.s)).join(''); } catch (e) {}
+      r = JP.toRomaji(JP.toHira(kana || s));
+    }
+    return Align.norm(r);
+  },
+  /** Words of a name as keys, in any order (米津玄師 and Kenshi Yonezu). */
+  words(s) {
+    s = this.clean(s).replace(/[(（][^)）]*[)）]/g, ' ');
+    if (JP.hasJapanese(s)) { try { if (Offline.ready()) return (Analyzer.line(s, 0).t || []).map(t => this.key(t.s)).filter(w => w.length > 1); } catch (e) {} }
+    return s.split(/[\s,・&×x]+/).map(w => this.key(w)).filter(w => w.length > 1);
+  },
+  /** How alike two names are, 0-1, across scripts. */
+  simName(a, b) {
+    a = this.clean(a).replace(/[(（][^)）]*[)）]/g, '').trim(); b = this.clean(b).replace(/[(（][^)）]*[)）]/g, '').trim();
+    if (!a || !b) return 0;
+    const ra = a.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, ''), rb = b.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+    if (ra && rb && (ra === rb)) return 1;
+    if (ra.length >= 2 && rb.length >= 2 && (ra.indexOf(rb) !== -1 || rb.indexOf(ra) !== -1)) return 0.9;
+    const ka = this.key(a), kb = this.key(b);
+    let s = ka && kb ? (ka === kb ? 1 : Align.sim(ka, kb)) : 0;
+    if (ka && kb && (this.swapped(a) === kb || this.swapped(b) === ka)) s = 1;
+    if (ka.length >= 3 && kb.length >= 3 && (ka.indexOf(kb) !== -1 || kb.indexOf(ka) !== -1)) s = Math.max(s, 0.85);
+    const wa = this.words(a), wb = this.words(b);
+    if (wa.length && wb.length) { const B = new Set(wb), both = wa.filter(w => B.has(w)).length; s = Math.max(s, both / Math.max(wa.length, wb.length)); }
+    return s;
+  },
+  /** A Japanese name in romaji, given name first ("Kenshi Yonezu"), as the key of the name in Japanese order (米津玄師). */
+  swapped(x) { const w = this.clean(x).split(/\s+/); return w.length === 2 && /^[A-Za-z]+$/.test(w[0]) && /^[A-Za-z]+$/.test(w[1]) ? this.key(w[1] + ' ' + w[0]) : ''; },
+  /** The same name (an artist alone), not one name inside another ("LiSA" is not "LiSA 紅蓮華"). */
+  sameName(a, b) {
+    const ka = this.key(a), kb = this.key(b);
+    if (!ka || !kb) return false;
+    if (ka === kb || this.swapped(a) === kb || this.swapped(b) === ka) return true;
+    return Math.min(ka.length, kb.length) / Math.max(ka.length, kb.length) >= 0.75 && Align.sim(ka, kb) >= 0.8;
+  },
+  /** How much two lyrics share, 0-1: pairs of characters in common, over the smaller of the two. Same song: well over 0.5. */
+  lyricSig(lines) {
+    const text = (Array.isArray(lines) ? lines : String(lines || '').split(/\r?\n/)).map(l => String(l).replace(/^(\[[^\]]*\])+/, '')).join('')
+      .normalize('NFKC').replace(/[\s\p{P}\p{S}a-zA-Z0-9]/gu, '');
+    const h = JP.toHira(text), set = new Set();
+    for (let i = 0; i < h.length - 1 && set.size < 1500; i++) set.add(h.substr(i, 2));
+    return set;
+  },
+  overlap(a, b) {
+    const A = a instanceof Set ? a : this.lyricSig(a), B = b instanceof Set ? b : this.lyricSig(b);
+    if (A.size < 8 || B.size < 8) return 0;
+    let both = 0; for (const x of A) if (B.has(x)) both++;
+    return both / Math.min(A.size, B.size);
+  }
+};
+
+/* ----- the pipeline ----- */
+const Maker = {
+  SURE: 2.5, NEAR: 6,
+  /** What kind of request this is. */
+  parse(input) {
+    const s = Names.clean(input);
+    const yt = YT.parseLink(s);
+    if (yt) return { kind: 'yt', id: yt.id, start: yt.start, text: s };
+    if (/animesonglyrics\.com\//i.test(s) && ASL.isSongUrl(s.split(/\s/)[0])) return { kind: 'asl', url: s.split(/\s/)[0], text: s };
+    return { kind: 'text', text: s, hints: Names.request(s) };
+  },
+
+  /* LRCLIB: everything that may be this song, grouped by lyrics (one song, many timings). */
+  lrcRow(r) {
+    const text = r.syncedLyrics || r.plainLyrics || '';
+    const lines = text.split(/\r?\n/).map(l => l.replace(/^(\[[^\]]*\])+/, '').trim()).filter(Boolean);
+    const jp = lines.filter(l => JP.hasJapanese(l)).length;
+    return { id: r.id, track: r.trackName || '', artist: r.artistName || '', album: r.albumName || '', duration: +r.duration || 0, synced: !!r.syncedLyrics, text,
+      lines: lines.length, jp: lines.length ? jp / lines.length : 0, inst: !!r.instrumental || /instrumental|inst\.|off\s*vocal|karaoke|カラオケ/i.test((r.trackName || '') + ' ' + (r.albumName || '')) };
+  },
+  async lrcQuery(qs) {
+    return Net.cached('lrc:' + qs, 7 * Net.DAY, async () => { const got = await Lyrics._get(Lyrics.API + 'search?' + qs, 12000); return Array.isArray(got) ? got.slice(0, 30) : []; });
+  },
+  async lrcFind(names, max) {
+    const qs = [], add = q => { if (q && qs.indexOf(q) === -1) qs.push(q); };
+    for (const n of names) {
+      if (n.title && n.artist) { const p = new URLSearchParams(); p.set('track_name', n.title); p.set('artist_name', n.artist); add(p.toString()); }
+      const q = [n.artist, n.title].filter(Boolean).join(' ').trim();
+      if (q) add('q=' + encodeURIComponent(q));
+      if (n.title) add('q=' + encodeURIComponent(n.title));
+    }
+    const rows = new Map();
+    const got = await Promise.allSettled(qs.slice(0, max || 8).map(q => this.lrcQuery(q)));
+    for (const g of got) if (g.status === 'fulfilled') for (const r of g.value) if (r && r.id != null && !rows.has(r.id)) rows.set(r.id, this.lrcRow(r));
+    const list = Array.from(rows.values()).filter(r => !r.inst && r.lines >= 4);
+    // group by lyrics
+    const groups = [];
+    for (const r of list) {
+      r.sig = Names.lyricSig(r.text.split(/\r?\n/).slice(0, 40));
+      const g = groups.find(g => Names.overlap(g.sig, r.sig) >= 0.6);
+      if (g) g.rows.push(r); else groups.push({ sig: r.sig, rows: [r] });
+    }
+    for (const g of groups) {
+      const count = (f) => { const c = new Map(); for (const r of g.rows) { const v = Names.clean(f(r)); if (v) c.set(v, (c.get(v) || 0) + 1); } return Array.from(c.entries()).sort((a, b) => b[1] - a[1]).map(x => x[0]); };
+      g.titles = count(r => Lyrics.titleFrom(r).replace(/\s*[-–]\s*(YOASOBI|.*Instrumental.*)$/i, ''));
+      g.artists = count(r => r.artist.replace(/\s*[(（][^)）]*[)）]/g, ''));
+      g.jp = Math.max(...g.rows.map(r => r.jp));
+      g.synced = g.rows.filter(r => r.synced && r.jp >= 0.5);
+      g.title = (g.titles.find(t => JP.hasJapanese(t) && !/official|music video|「|」/i.test(t)) || g.titles.find(t => !/official|music video/i.test(t)) || g.titles[0] || '').trim();
+      g.artist = (g.artists.find(a => !/official|music video|「/i.test(a)) || g.artists[0] || '').trim();
+    }
+    return groups;
+  },
+  /** How well a group of LRCLIB entries fits what was asked. */
+  scoreGroup(g, want, vids) {
+    let s = 0;
+    const titles = [want.title].concat(want.romaji || [], want.alts || []).filter(Boolean);
+    let ts = titles.length ? Math.max(...g.titles.slice(0, 4).map(t => Math.max(...titles.map(w => Names.simName(t, w))))) : 0;
+    let as = want.artist ? Math.max(...g.artists.slice(0, 3).map(a => Names.simName(a, want.artist))) : 0;
+    if (want.bare) {
+      // words typed as they come: "YOASOBI アイドル" (artist and title) or "YOASOBI" (only the artist)
+      const tx = want.text, low = tx.toLowerCase();
+      for (const a of g.artists.slice(0, 3)) {
+        if (!a) continue;
+        if (Names.sameName(a, tx)) { as = 1; continue; }
+        const i = a.length >= 2 ? low.indexOf(a.toLowerCase()) : -1;
+        if (i === -1) continue;
+        const rest = Names.clean((tx.slice(0, i) + ' ' + tx.slice(i + a.length)).replace(/^[\s\-–—:：/／|・]+|[\s\-–—:：/／|・]+$/g, ''));
+        if (rest) { ts = Math.max(ts, ...g.titles.slice(0, 4).map(t => Names.simName(t, rest))); as = 1; }
+      }
+    }
+    s += ts * 6 + as * 4;
+    if (want.text && !want.title) s += Math.max(...g.titles.slice(0, 4).map(t => Names.simName(t, want.text))) * 5;
+    if (g.jp >= 0.5) s += 2; else s -= 4;
+    if (g.synced.length) s += 2;
+    s += Math.min(2, Math.log10(1 + g.rows.length));
+    // YouTube's own ranking says which song people mean by these words
+    (vids || []).slice(0, 5).forEach((v, i) => {
+      const sp = Names.split(v.title, v.channel);
+      if (Names.simName(sp.title, g.title) >= 0.8 && (!g.artist || Names.simName(sp.artist || v.channel, g.artist) >= 0.5 || v.title.indexOf(g.artist) !== -1)) s += Math.max(0, 4 - i);
+    });
+    return s;
+  },
+  /** The timing (an LRCLIB entry) that fits a video best. */
+  pickTiming(g, duration) {
+    const rows = (g.synced.length ? g.synced : g.rows.filter(r => r.jp >= 0.5)).slice();
+    if (!rows.length) return null;
+    if (duration) {
+      rows.sort((a, b) => Math.abs(a.duration - duration) - Math.abs(b.duration - duration));
+      const r = rows[0], diff = Math.abs(r.duration - duration);
+      return { row: r, diff, fit: diff <= this.SURE ? 'sure' : diff <= this.NEAR ? 'near' : 'off' };
+    }
+    // no video length: the length most entries share (the album track), timed
+    const by = new Map(); for (const r of rows) { const k = Math.round(r.duration); by.set(k, (by.get(k) || 0) + 1); }
+    const common = Array.from(by.entries()).sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
+    const r = rows.find(x => Math.round(x.duration) === common) || rows[0];
+    return { row: r, diff: null, fit: 'unknown' };
+  },
+
+  /* animesonglyrics: the same song, confirmed by its lyrics. */
+  async aslFind(names, lrcSig) {
+    const qs = [];
+    for (const n of names) {
+      for (const r of n.romaji || []) qs.push(r);
+      if (n.title && !JP.hasJapanese(n.title)) qs.push(n.title);
+      if (n.anime) qs.push(n.anime);
+      if (n.text && !JP.hasJapanese(n.text) && !YT.parseLink(n.text)) qs.push(n.text);
+    }
+    const tried = new Set(), cands = new Map();
+    const want = names[0] || {};
+    const consider = (s, why) => { if (!s || !s.url || cands.has(s.url)) return; cands.set(s.url, Object.assign({ why }, s)); };
+    for (const q of uniq(qs.map(q => Names.clean(q))).slice(0, 3)) {
+      if (tried.has(q.toLowerCase())) continue; tried.add(q.toLowerCase());
+      let res = null;
+      try { res = await Net.cached('asls:' + q.toLowerCase(), 7 * Net.DAY, () => ASL.search(q)); } catch (e) { continue; }
+      for (const s of res.songs) consider(s, 'search');
+      // an anime asked for (or named in the video title): its song list
+      const animeName = names.map(n => n.anime).find(Boolean);
+      if (animeName && res.anime.length) {
+        const a = res.anime.slice(0, 2).sort((x, y) => Names.simName(y.title, animeName) - Names.simName(x.title, animeName))[0];
+        if (a && Names.simName(a.title, animeName) >= 0.4 || res.anime.length === 1) {
+          try { const A = await Net.cached('asla:' + a.slug, 7 * Net.DAY, () => ASL.anime(a.slug)); for (const s of A.songs) consider({ url: s.url, title: s.title, artist: '', anime: A.title, note: s.note }, 'anime'); } catch (e) {}
+        }
+      }
+      if (cands.size >= 25) break;
+    }
+    // rank by name, then open the best few and compare their lyrics
+    const titles = [want.title].concat(...names.map(n => n.romaji || [])).filter(Boolean);
+    const list = Array.from(cands.values()).map(c => {
+      const t = titles.length ? Math.max(...titles.map(w => Names.simName(c.title.replace(/\s*\([^)]*\)\s*$/, ''), w))) : 0;
+      const a = want.artist && c.artist ? Names.simName(c.artist, want.artist) : 0;
+      return Object.assign(c, { score: t * 5 + a * 3 });
+    }).sort((x, y) => y.score - x.score);
+    for (const c of list.slice(0, lrcSig ? 4 : 2)) {
+      if (!lrcSig && c.score < 3) break;
+      let song = null;
+      try { song = await Net.cached('aslp:' + ASL.path(c.url), 7 * Net.DAY, () => ASL.song(c.url)); } catch (e) { continue; }
+      if (!song || !song.hasKanji) continue;
+      const ov = lrcSig ? Names.overlap(lrcSig, song.kanji) : null;
+      if (lrcSig ? ov >= 0.5 : c.score >= 4) return Object.assign(song, { overlap: ov, how: c.why });
+    }
+    return null;
+  },
+
+  /* YouTube: the music video that fits best (official, the studio recording, and a length a timing matches). */
+  scoreVideo(v, want, g) {
+    let s = 0;
+    const title = Names.clean(v.title), ch = Names.channel(v.channel);
+    const tSim = Math.max(Names.simName(Names.split(v.title, v.channel).title, want.title || ''), title.indexOf(want.title || '\u0000') !== -1 ? 0.9 : 0);
+    s += tSim * 6;
+    if (tSim < 0.5) s -= 10;                       // another song's video, however well it fits otherwise
+    if (want.anime && Names.simName(Names.anime(v.title) || '', want.anime) >= 0.6) s += 3;   // asked by the anime: its own opening or ending video
+    if (want.artist) s += Math.max(Names.simName(ch, want.artist), title.toLowerCase().indexOf(want.artist.toLowerCase()) !== -1 ? 0.8 : 0) * 4;
+    if (/official|公式|- topic|vevo/i.test(v.channel) || (want.artist && Names.simName(ch, want.artist) >= 0.8)) s += 3;
+    if (Names.VERSION.test(title) && !(want.version)) s -= 6;
+    if (v.duration && (v.duration < 50 || v.duration > 600)) s -= 4;
+    if (g && v.duration) { const t = this.pickTiming(g, v.duration); if (t && t.fit === 'sure') s += 6; else if (t && t.fit === 'near') s += 3; }
+    s += Math.min(3, Math.log10(1 + (v.views || 0)) / 3);
+    return s;
+  },
+
+  /** Run the pipeline. ui: { step(id, state, text), choose(options) -> Promise<index|null> }. o.dry: do not make the lesson. */
+  async run(input, ui, o) {
+    o = o || {}; ui = ui || {};
+    const step = (id, state, text) => { try { if (ui.step) ui.step(id, state, text); } catch (e) {} };
+    const T0 = Date.now(), R = { input, notes: [] };
+    if (!Offline.ready()) { step('understand', 'work', 'Opening the dictionary…'); try { await Offline.load(); } catch (e) {} }
+    const req = this.parse(input);
+    R.kind = req.kind;
+    if (!req.text) throw new Error('Type a song name or paste a YouTube link.');
+
+    /* 1. understand */
+    let video = null, want = { text: req.text, title: '', artist: '', anime: '', romaji: [], theme: null, version: '' };
+    step('understand', 'work', req.kind === 'yt' ? 'Reading the YouTube link…' : 'Reading your request…');
+    if (req.kind === 'yt') {
+      try { video = await YT.info(req.id); } catch (e) { video = { id: req.id, title: '', channel: '', duration: 0 }; R.notes.push('video info: ' + (e.message || e)); }
+      video.start = req.start || 0;
+      if (video.title) Object.assign(want, Names.split(video.title, video.channel));
+      want.text = video.title || req.text;
+      step('understand', video.title ? 'done' : 'warn', video.title ? '“' + video.title + '”' + (video.channel ? ' · ' + video.channel : '') + (video.duration ? ' · ' + fmtClock(video.duration) : '') : 'YouTube did not say what this video is; searching by its link alone is not possible.');
+      if (!video.title) throw new Error('YouTube did not say which song this video is. Type the song’s name instead.');
+    } else if (req.kind === 'asl') {
+      step('understand', 'done', 'An animesonglyrics.com page');
+    } else {
+      Object.assign(want, req.hints);
+      want.text = req.text;
+      if (!want.title && !want.anime && !want.artistOnly) { want.title = req.text; want.bare = true; }
+      step('understand', 'done', want.artistOnly ? 'Songs by ' + want.artist : [want.title && '“' + want.title + '”', want.artist && 'by ' + want.artist, want.anime && 'from ' + want.anime, want.theme && (want.theme.kind + (want.theme.n ? ' ' + want.theme.n : ''))].filter(Boolean).join(' ') || req.text);
+    }
+    R.want = { title: want.title, artist: want.artist, anime: want.anime, romaji: want.romaji, theme: want.theme, version: want.version };
+
+    /* 2. find the song */
+    step('find', 'work', 'Looking in LRCLIB, animesonglyrics.com and YouTube…');
+    let asl = null, groups = [], vids = [], list = null;   // list: the request names an artist or an anime, not one song
+    if (req.kind === 'asl') {
+      asl = await ASL.song(req.url);
+      if (!asl || !asl.hasKanji) throw new Error('That page has no Japanese lyrics.');
+      Object.assign(want, { title: asl.title, artist: asl.artist, anime: asl.anime });
+    }
+    // an anime and a theme but no song name ("Chainsaw Man opening"): YouTube knows which song that is
+    if (req.kind === 'text' && want.anime && !want.title) {
+      try {
+        vids = await YT.search(want.anime + ' ' + (want.theme ? want.theme.kind + (want.theme.n ? ' ' + want.theme.n : '') : 'opening') + ' full');
+        const ofAnime = vids.filter(v => Names.simName(Names.anime(v.title) || v.title, want.anime) >= 0.4 && !Names.VERSION.test(v.title) && !/\b(all|every|compilation|1\s*[-~〜]\s*\d+)\b|全/i.test(v.title));
+        if (!(want.theme && want.theme.n)) {
+          const songs = [];
+          for (const v of ofAnime) { const t = Names.split(v.title, v.channel).title; if (t && !songs.some(x => Names.simName(x, t) >= 0.8)) songs.push(t); }
+          if (songs.length >= 2) list = { by: 'anime', name: want.anime, vids: ofAnime, ask: 'Which ' + want.anime + ' ' + (want.theme ? want.theme.kind.toLowerCase() : 'song') + '?' };
+        }
+        const nth = want.theme && want.theme.n ? ofAnime.find(v => { const th = Names.theme(v.title); return th && th.n === want.theme.n && th.kind === want.theme.kind; }) : null;
+        const top = nth || ofAnime[0] || vids.find(v => Names.simName(Names.anime(v.title) || v.title, want.anime) >= 0.4) || vids[0];
+        if (top) { const sp = Names.split(top.title, top.channel); want.title = sp.title; want.artist = want.artist || (Names.VERSION.test(top.title) ? '' : sp.artist); want.romaji = uniq((want.romaji || []).concat(sp.romaji, Names.latin(top.title, [want.anime]))); R.notes.push('theme via YouTube: ' + top.title); }
+      } catch (e) { R.notes.push('youtube search: ' + (e.message || e)); }
+    }
+    const names = [want];
+    const [gRes, vRes] = await Promise.allSettled([
+      this.lrcFind(names),
+      req.kind === 'yt' ? Promise.resolve([]) : (vids.length ? Promise.resolve(vids) : YT.search(want.artistOnly ? want.artist : [want.artist, want.title || want.text].filter(Boolean).join(' ')))
+    ]);
+    if (gRes.status === 'fulfilled') groups = gRes.value; else R.notes.push('lrclib: ' + (gRes.reason && gRes.reason.message || gRes.reason));
+    if (vRes.status === 'fulfilled') vids = vRes.value; else R.notes.push('youtube search: ' + (vRes.reason && vRes.reason.message || vRes.reason));
+    // what YouTube calls this song (the Japanese title, romaji) helps LRCLIB and animesonglyrics find it
+    const vArtist = v => Names.split(v.title, v.channel).artist || Names.channel(v.channel);
+    // only an artist named ("YOASOBI", "songs by LiSA"): YouTube's results are that artist's songs
+    if (!list && req.kind === 'text' && !want.anime) {
+      const who = want.artistOnly ? want.artist : want.bare && vids.slice(0, 6).filter(v => Names.sameName(vArtist(v), want.text)).length >= 2 ? want.text : '';
+      if (who) list = { by: 'artist', name: who, vids: vids.filter(v => Names.simName(vArtist(v), who) >= 0.8 && !Names.VERSION.test(v.title)), ask: 'Which ' + who + ' song?' };
+    }
+    const ytNames = [];
+    for (const v of list ? list.vids.slice(0, 10) : vids.slice(0, 6)) {
+      const sp = Names.split(v.title, v.channel);
+      const rel = list || Names.simName(sp.title, want.title || want.text || '') >= 0.6 || (want.artist && (Names.simName(sp.artist || Names.channel(v.channel), want.artist) >= 0.8)) || vids.indexOf(v) < 2;
+      if (!rel || Names.VERSION.test(v.title) || !sp.title) continue;
+      if (!list) want.romaji = uniq((want.romaji || []).concat(Names.latin(v.title, [want.artist, Names.channel(v.channel), want.anime])));
+      if ((list || JP.hasJapanese(sp.title)) && ytNames.length < (list ? 5 : 2) && !ytNames.some(n => Names.simName(n.title, sp.title) >= 0.8)) ytNames.push({ title: sp.title, artist: sp.artist || (list && list.by === 'artist' ? list.name : want.artist) });
+    }
+    want.alts = list ? [] : ytNames.map(n => n.title);
+    let ranked = groups.map(g => ({ g, s: this.scoreGroup(g, want, vids) })).sort((a, b) => b.s - a.s);
+    if (ytNames.length && (list || !ranked.length || ranked[0].s < 10)) {
+      try { groups = await this.lrcFind([want].concat(ytNames), list ? 12 : 8); ranked = groups.map(g => ({ g, s: this.scoreGroup(g, want, vids) })).sort((a, b) => b.s - a.s); R.notes.push('second LRCLIB pass with ' + ytNames.map(n => n.title).join(', ')); } catch (e) {}
+    }
+    if (asl) { const sig = Names.lyricSig(asl.kanji); ranked = ranked.filter(x => Names.overlap(x.g.sig, sig) >= 0.5).concat(ranked.filter(x => Names.overlap(x.g.sig, sig) < 0.5).map(x => ({ g: x.g, s: x.s - 20 }))); }
+    let group = ranked.length ? ranked[0].g : null, chosen = null;
+    const vidOf = (g, from) => (from || vids).find(v => Names.simName(Names.split(v.title, v.channel).title, g.title) >= 0.8 || g.titles.slice(0, 4).some(t => Names.simName(Names.split(v.title, v.channel).title, t) >= 0.8)) || null;
+    const option = x => { const v = vidOf(x.g, list && list.vids), th = v && Names.theme(v.title);
+      return { title: x.g.title, artist: x.g.artist, timed: x.g.synced.length > 0, lines: x.g.rows[0].lines, note: [th && list && list.by === 'anime' ? th.kind + (th.n ? ' ' + th.n : '') : '', v && v.views ? YT.views(v.views) : ''].filter(Boolean).join(' · ') }; };
+    const ask = async (xs, q) => {
+      step('find', 'ask', q);
+      const k = await ui.choose(xs.map(option));
+      if (k == null) throw Object.assign(new Error('Stopped.'), { code: 'cancelled' });
+      step('find', 'work', 'Taking “' + xs[k].g.title + '”…');
+      return xs[k];
+    };
+    // an artist or an anime: their songs that YouTube shows, the most watched first
+    if (list && !asl) {
+      const pool = ranked.filter(x => x.g.jp >= 0.5), theirs = [];
+      if (list.by === 'anime') {
+        // each of the anime's songs on YouTube, in YouTube's order, with the best lyrics found for it
+        for (const v of list.vids) {
+          const t = Names.split(v.title, v.channel).title;
+          const x = t && pool.find(x => theirs.indexOf(x) === -1 && x.g.titles.slice(0, 4).some(gt => Names.simName(gt, t) >= 0.8));
+          if (x) theirs.push(x);
+        }
+      } else {
+        const pos = g => { const v = vidOf(g, list.vids); return v ? list.vids.indexOf(v) : 99; };
+        for (const x of pool.filter(x => x.g.artists.slice(0, 3).some(a => Names.simName(a, list.name) >= 0.8)).sort((a, b) => pos(a.g) - pos(b.g) || b.s - a.s))
+          if (!theirs.some(y => Names.simName(y.g.title, x.g.title) >= 0.9)) theirs.push(x);
+      }
+      theirs.splice(8);
+      R.notes.push((list.by === 'artist' ? 'songs by ' : 'songs from ') + list.name + ': ' + theirs.length);
+      if (theirs.length) chosen = theirs.length > 1 && ui.choose ? await ask(theirs, list.ask) : theirs[0];
+    }
+    // two different songs fit about as well: ask
+    if (!chosen && ranked.length > 1 && !asl && req.kind === 'text' && ui.choose && ranked[1].s >= ranked[0].s * 0.9 && ranked[0].s < 12) chosen = await ask(ranked.slice(0, 4), 'Which song do you mean?');
+    if (chosen) {
+      group = chosen.g;
+      const v = vidOf(group, list && list.vids);
+      if (list || v) want.romaji = v ? uniq(Names.split(v.title, v.channel).romaji.concat(Names.latin(v.title, [group.artist, Names.channel(v.channel), want.anime]))) : [];
+      want.title = group.title; want.artist = group.artist || want.artist; want.bare = false;
+    }
+    if (group && !chosen && ranked[0] && ranked[0].s < 3 && !asl) { R.notes.push('weak LRCLIB match ' + ranked[0].s.toFixed(1)); group = null; }
+    if (group) { want.title = want.title && req.kind !== 'text' ? want.title : group.title || want.title; if (!want.artist || req.kind === 'text') want.artist = group.artist || want.artist; if (req.kind === 'yt' && group.title) want.title = group.title; }
+    // the lyrics page (English) for the same song
+    if (!asl) {
+      try { asl = await this.aslFind([want], group ? group.sig : null); } catch (e) { R.notes.push('animesonglyrics: ' + (e.message || e)); }
+      if (asl && !group && asl.artist) { try { const g2 = await this.lrcFind([{ title: asl.title, artist: asl.artist, romaji: [asl.title] }]); const sig = Names.lyricSig(asl.kanji); group = g2.find(g => Names.overlap(g.sig, sig) >= 0.5) || null; } catch (e) {} }
+    }
+    if (!group && !asl) throw new Error('No Japanese lyrics were found for “' + (want.title || req.text) + '”. Try the title in Japanese, add the artist, or paste the YouTube link.');
+    const songTitle = (group && group.title) || (asl && asl.title) || want.title;
+    const artist = (group && group.artist) || (asl && asl.artist) || want.artist;
+    R.song = { title: songTitle, artist, anime: (asl && asl.anime) || want.anime || '', theme: (asl && asl.theme) || (want.theme ? want.theme.kind + (want.theme.n ? ' ' + want.theme.n : '') : ''), lrcEntries: group ? group.rows.length : 0, asl: asl ? asl.url : null, aslOverlap: asl ? asl.overlap : null };
+    step('find', 'done', '“' + songTitle + '”' + (artist ? ' by ' + artist : '') + (R.song.anime ? ' · ' + R.song.anime : '') + (R.song.theme ? ' · ' + R.song.theme : ''));
+
+    /* 3. the video and the timing, chosen together */
+    step('video', 'work', 'Choosing the video…');
+    if (!video) {
+      const fitWant = { title: songTitle, artist, version: want.version, anime: req.kind === 'text' && want.theme ? want.anime : '' };
+      if (asl && asl.yt && !vids.some(v => v.id === asl.yt.id)) vids.unshift({ id: asl.yt.id, title: songTitle, channel: '', duration: 0, views: 0, fromPage: true });
+      const scored = vids.map(v => ({ v, s: this.scoreVideo(v, fitWant, group) + (asl && asl.yt && v.id === asl.yt.id ? 2 : 0) })).sort((a, b) => b.s - a.s);
+      if (scored.length && scored[0].s > 2) { video = Object.assign({}, scored[0].v); video.start = video.fromPage ? (asl.yt.start || 0) : 0; }
+      if (video && !video.duration) { try { const inf = await YT.info(video.id); video.duration = inf.duration; video.title = video.title || inf.title; video.channel = video.channel || inf.channel; } catch (e) {} }
+    }
+    const timing = group ? this.pickTiming(group, video && video.duration ? Math.max(0, video.duration - (video.start || 0)) : 0) : null;
+    R.video = video ? { id: video.id, title: video.title, channel: video.channel, duration: video.duration } : null;
+    R.timing = timing ? { fit: timing.fit, diff: timing.diff, duration: timing.row.duration, synced: timing.row.synced } : null;
+    if (video) step('video', timing && timing.fit === 'off' ? 'warn' : 'done', '“' + (video.title || songTitle) + '”' + (video.channel ? ' · ' + video.channel : '') + (video.duration ? ' · ' + fmtClock(video.duration) : '') +
+      (timing && timing.fit === 'off' ? ' · the timing found is for a ' + fmtClock(timing.row.duration) + ' version: you can sync it in one tap' : ''));
+    else step('video', 'warn', BUILD.hosted || location.protocol !== 'file:' ? 'No video found: the lesson plays your own file, or the voice reads the lines.' : 'No video found.');
+
+    /* 4. the lines */
+    step('lyrics', 'work', 'Taking the lyrics…');
+    let parsed = null, timedFrom = '';
+    if (timing && timing.row.synced) { parsed = JP.parseTranscript(timing.row.text, 'lyrics.lrc', { lyrics: true }); timedFrom = 'LRCLIB'; }
+    if ((!parsed || !parsed.lines.length) && asl) parsed = JP.parseTranscript(asl.kanji.join('\n'), 'lyrics.txt', { lyrics: true });
+    if ((!parsed || !parsed.lines.length) && group) { const r = group.rows.find(x => x.jp >= 0.5) || group.rows[0]; parsed = JP.parseTranscript(r.text, r.synced ? 'lyrics.lrc' : 'lyrics.txt', { lyrics: true }); if (parsed.timed) timedFrom = 'LRCLIB'; }
+    if (!parsed || !parsed.lines.length) throw new Error('The lyrics found had no Japanese lines.');
+    const lines = parsed.lines.map(l => { const x = { a: l.a, b: l.b, jp: l.jp }; if (l.gap) x.gap = 1; return x; }).slice(0, 1500);
+    const timed = !!parsed.timed;
+    R.lines = lines.length; R.timed = timed;
+    step('lyrics', 'done', plural(lines.length, 'line') + (timed ? ', timed' + (timing && timing.fit === 'sure' ? ' to this video' : timing && timing.fit === 'near' ? ' (close to this video)' : '') + ' (LRCLIB)' : ', not timed yet' + (asl ? ' (animesonglyrics.com)' : '')));
+
+    /* 5. the translation */
+    step('translate', 'work', 'Matching the English to each line…');
+    let nEn = 0, approx = 0;
+    if (asl && asl.hasEnglish) {
+      const en = Align.english(lines.map(l => l.jp), asl);
+      lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx || (en.approxLines && en.approxLines[i]) ? ', matched by position' : ''); nEn++; if (en.approx || (en.approxLines && en.approxLines[i])) approx++; } });
+    }
+    R.english = { lines: nEn, of: lines.length, approx };
+    const later = lines.length - nEn;
+    step('translate', nEn ? (later > lines.length * 0.2 ? 'warn' : 'done') : 'warn', nEn ? nEn + ' of ' + lines.length + ' lines have a person’s translation (animesonglyrics.com)' + (later ? '; ' + (AI.available() ? AI.name() + ' will translate the rest' : 'the rest have none yet') : '')
+      : AI.available() ? 'No translation online: ' + AI.name() + ' will translate the lines in the background.' : 'No translation found. Set up Kotohana (Settings) to translate lines on this device.');
+    R.ms = Date.now() - T0;
+    if (o.dry) return R;
+
+    /* 6. the lesson */
+    step('build', 'work', 'Building the lesson…');
+    const credit = [asl ? 'Lyrics' + (nEn ? ' and English translation' : '') + ': animesonglyrics.com' : '', timedFrom || (group && !asl) ? (asl ? 'timing' : 'Lyrics' + (timed ? ' and timing' : '')) + ': LRCLIB' : ''].filter(Boolean).join('; ');
+    const m = Lib.newMedia({ title: songTitle, artist, type: 'song', lines, timed, stageSize: Game.p.settings.stageSize || 0, credit, isVideo: !!video });
+    if (video) { m.yt = video.id; m.ytStart = video.start || 0; if (video.duration) m.ytDur = video.duration; }
+    if (asl) { m.source = asl.url; } else if (group) m.source = 'https://lrclib.net/';
+    m.anime = R.song.anime; m.theme = R.song.theme;
+    if (timing && timed) { m.lrcDur = timing.row.duration || 0; if (timing.fit === 'off') m.timingOff = 1; }
+    m.made = { at: now(), from: req.kind, input: String(input).slice(0, 200) };
+    const own = this.ownFile(m);
+    if (own) { m.fileName = own.name; m.filePath = own.path; m.isVideo = /\.(mp4|webm|mkv|mov|m4v)$/i.test(own.name) || m.isVideo; R.ownFile = own.path; }
+    await Lib.create(m);
+    if (m.yt && !own) Player.attachYT(m.id, m.yt, m.title, m.ytStart);
+    Game.p.lastMedia = m.id; Game.touch();
+    step('build', 'done', plural(m.stages.length, 'stage') + (own ? ' · your file “' + own.name + '” is attached, so it plays offline' : m.yt ? ' · the video streams from YouTube' : ''));
+
+    /* 7. the dictionary breakdown and the plan */
+    step('plan', 'work', 'Breaking down every line and writing the plan…');
+    try { for (let n = 0; n < m.stages.length; n++) await Offline.stage(m, n); } catch (e) { R.notes.push('breakdown: ' + (e.message || e)); }
+    try { m.plan = await Plan.make(m); await Lib.save(m); } catch (e) { console.warn(e); R.notes.push('plan: ' + (e.message || e)); }
+    step('plan', 'done', m.plan ? m.plan.summary : 'Ready.');
+    R.ms = Date.now() - T0;
+    R.lesson = m.id;
+    if (later && AI.available()) this.translateLater(m);
+    return R;
+  },
+  /** A file in the media folder that is this song (attached so the lesson works offline). */
+  ownFile(m) {
+    try {
+      if (!BUILD.local || typeof Folder === 'undefined' || !Folder.entries || !Folder.entries.size) return null;
+      const used = new Set(Lib.list.map(x => x.filePath || x.fileName).filter(Boolean));
+      let best = null, bs = 0;
+      for (const e of Folder.media()) {
+        if (used.has(e.path) || used.has(e.name)) continue;
+        const base = e.name.replace(/\.[^.]+$/, '');
+        const s = Math.max(Names.simName(Names.split(base, '').title, m.title), base.indexOf(m.title) !== -1 ? 0.95 : 0);
+        if (s > bs) { bs = s; best = e; }
+      }
+      return bs >= 0.85 ? best : null;
+    } catch (e) { return null; }
+  },
+  /** Kotohana (or Claude) translates the lines that have none, one stage at a time, behind everything else. */
+  async translateLater(m) {
+    if (this._bg && this._bg.has(m.id)) return;
+    (this._bg = this._bg || new Set()).add(m.id);
+    try {
+      for (let n = 0; n < m.stages.length; n++) {
+        const cur = Lib.get(m.id); if (!cur) return;
+        const st = cur.stages[n], d = await Offline.stage(cur, n);
+        if (!d || d.lines.every(l => l.en || l.deep === 'local')) continue;
+        Bus.emit('maker', { id: m.id, stage: n, of: cur.stages.length });
+        const r = await AI.analyzeStage(cur, n, { background: true, known: await AI.knownLines(cur, n) });
+        if (r.error || !r.lines.size) break;
+        const old = (await Lib.getStage(cur, n)) || { lines: [] }, lines = [];
+        for (let i = st.from; i <= st.to; i++) { const c = r.lines.get(i), o = old.lines.find(l => l.i === i); if (c) { if (o && o.my) c.my = o.my; lines.push(c); } else if (o) lines.push(o); }
+        const meta = r.meta || {};
+        const doc = { lines, sum: meta.sum || old.sum || '', culture: meta.culture || old.culture || [], quiz: meta.quiz || old.quiz || [] };
+        if (lines.some(l => l.auto)) doc.auto = Offline.VERSION;
+        await Lib.saveStage(cur, n, doc);
+      }
+    } catch (e) { console.warn('background translation', e); }
+    finally { this._bg.delete(m.id); Bus.emit('maker', { id: m.id, done: true }); }
+  },
+  /** Try a list of requests without making lessons; for tuning. Lyrics are never returned. */
+  async evaluate(list, pause) {
+    const out = [];
+    for (const q of list) {
+      const t0 = Date.now();
+      let offered = null;
+      try { const r = await this.run(q, { choose: async opts => { offered = opts.map(o => [o.title, o.artist, o.note].filter(Boolean).join(' / ')); return 0; } }, { dry: true }); out.push({ q, ok: true, ms: Date.now() - t0, song: r.song, video: r.video, timing: r.timing, lines: r.lines, timed: r.timed, english: r.english, offered, notes: r.notes }); }
+      catch (e) { out.push({ q, ok: false, ms: Date.now() - t0, err: String(e.message || e) }); }
+      if (pause) await sleep(pause);
+    }
+    return out;
+  }
+};
+
+/* ===== 53-plan.js ===== */
+/* ---------- 53-plan: a lesson plan for a song ----------
+   Made from the dictionary breakdown of every line, so it needs no connection: how hard the song is for this
+   learner (how many of its words they already know, how many kanji, which grammar), the words worth learning first,
+   each stage with its new words and a time estimate, and a few days' schedule. With Kotohana or Claude there, a
+   short introduction (what the song is about, what to listen for) is added afterwards. */
+'use strict';
+
+const Plan = {
+  PER_DAY: 20,                 // minutes a day the schedule assumes
+  async docs(m) {
+    const out = [];
+    for (let n = 0; n < m.stages.length; n++) {
+      let d = null;
+      try { d = Offline.ready() ? await Offline.stage(m, n) : await Lib.getStage(m, n); } catch (e) { d = null; }
+      out.push(d);
+    }
+    return out;
+  },
+  async make(m) {
+    const docs = await this.docs(m);
+    const words = new Map(), kanji = new Set(), gram = new Map();
+    let tok = 0, knownTok = 0;
+    const stages = m.stages.map((st, n) => {
+      const d = docs[n], fresh = new Set();
+      for (let i = st.from; i <= st.to; i++) {
+        const A = d && Array.isArray(d.lines) ? d.lines.find(l => l.i === i) : null;
+        if (!A || !Array.isArray(A.t)) continue;
+        for (const t of A.t) {
+          JP.kanjiOf(t.s).forEach(k => kanji.add(k));
+          if (!tokIsContent(t)) continue;
+          const id = tokId(t), it = Srs.get(id), known = !!it && (it.known || it.s >= 5);
+          tok++; if (known) knownTok++;
+          let w = words.get(id);
+          if (!w) { w = { id, w: t.d || t.s, r: Srs.dictReading ? Srs.dictReading(t) : (t.r || ''), g: t.g, rank: t.rank || 99999, n: 0, stage: n, garden: !!it, known }; words.set(id, w); if (!it) fresh.add(id); }
+          w.n++;
+        }
+        for (const g of A.g || []) { if (!gram.has(g.id)) gram.set(g.id, { id: g.id, p: g.p, m: g.m, n: 0, stage: n }); gram.get(g.id).n++; }
+      }
+      const lines = st.to - st.from + 1;
+      return { n, lines, fresh: fresh.size, min: Math.max(4, Math.round(lines * 1.2 + 5)) };
+    });
+    const all = Array.from(words.values());
+    const fresh = all.filter(w => !w.garden && !w.known);
+    // the words to learn first: used most in this song, then the most common in Japanese
+    const key = all.filter(w => !w.known).sort((a, b) => (b.n - a.n) || (a.rank - b.rank)).slice(0, 12).map(w => ({ w: w.w, r: w.r, g: w.g, n: w.n }));
+    const lv = { easy: 0, mid: 0, hard: 0 };
+    for (const k of kanji) { const e = Dict.kanji(k); const l = e ? e.lv : 0; if (l >= 4) lv.easy++; else if (l === 3) lv.mid++; else lv.hard++; }
+    const share = tok ? knownTok / tok : 0;
+    const kanjiHard = kanji.size ? lv.hard / kanji.size : 0;
+    const level = share >= 0.8 ? 'comfortable' : share >= 0.5 ? 'stretch' : kanjiHard > 0.5 && fresh.length > 40 ? 'hard' : 'challenge';
+    const LEVEL = { comfortable: 'Comfortable: you know most of its words', stretch: 'A good stretch: about half its words are new', challenge: 'A challenge: most of its words are new to you', hard: 'Hard: many new words and advanced kanji' };
+    const grammar = Array.from(gram.values()).sort((a, b) => a.stage - b.stage || b.n - a.n).filter(g => !/^(wa|ga|wo|ni|de|no|to|mo|da|ka|ne|yo|dict|masu|ta)$/.test(g.id)).slice(0, 8).map(g => ({ id: g.id, p: g.p, m: g.m, stage: g.stage }));
+    // days: stages fill each day up to about twenty minutes; the last day ends with the final test and a talk
+    const days = []; let cur = { stages: [], min: 0 };
+    for (const s of stages) { if (cur.stages.length && cur.min + s.min > this.PER_DAY + 5) { days.push(cur); cur = { stages: [], min: 0 }; } cur.stages.push(s.n); cur.min += s.min; }
+    if (cur.stages.length) days.push(cur);
+    days.push({ final: true, min: 10 });
+    const total = stages.reduce((a, s) => a + s.min, 0) + 10;
+    return {
+      v: 1, at: now(), stages, level, levelText: LEVEL[level], known: Math.round(share * 100),
+      words: { total: all.length, fresh: fresh.length, key }, kanji: { n: kanji.size, easy: lv.easy, mid: lv.mid, hard: lv.hard }, grammar, days, total,
+      summary: plural(stages.length, 'stage') + ' · about ' + total + ' min · ' + plural(fresh.length, 'new word') + ' · ' + LEVEL[level].split(':')[0].toLowerCase(),
+      intro: '', listen: ''
+    };
+  },
+  /** What the song is about and what to listen for, from its translated lines (Kotohana or Claude). */
+  async intro(m) {
+    if (!AI.available() || !m.plan || m.plan.intro) return;
+    const rows = [];
+    for (let i = 0; i < m.lines.length && rows.length < 14; i++) { const L = m.lines[i]; if (L.en) rows.push(L.jp + ' = ' + L.en); }
+    if (rows.length < 4) return;
+    const prompt = ['A learner is about to study the ' + AI.typeText(m) + ' "' + m.title + '"' + (m.artist ? ' by ' + m.artist : '') + (m.anime ? ' (from ' + m.anime + ')' : '') + '. Some of its lines (Japanese = English):',
+      rows.join('\n'), '',
+      'Reply with a JSON object: "intro" is two short English sentences on what the song is about, based only on these lines; "listen" is one short English sentence on something in the Japanese worth listening for (a repeated phrase, a way of speaking).'].join('\n');
+    try {
+      const r = await AI.s().json(prompt, { schema: { type: 'object', properties: { intro: { type: 'string' }, listen: { type: 'string' } }, required: ['intro', 'listen'] }, max: 220, modelTier: 'quick', cache: false, background: true });
+      const cur = Lib.get(m.id); if (!cur || !cur.plan) return;
+      cur.plan.intro = String((r && r.intro) || '').trim(); cur.plan.listen = String((r && r.listen) || '').trim(); cur.plan.by = AI.name();
+      await Lib.save(cur); Bus.emit('plan', cur.id);
+    } catch (e) { console.warn('plan intro', e); }
+  },
+  /** The plan as a card: for the lesson map and the screen after a lesson is made. */
+  card(m, o) {
+    o = o || {};
+    const P = m.plan; if (!P) return null;
+    const done = n => { const s = m.stages[n]; return !!(s && s.st >= 3); };
+    const fig = (b, s) => h('div.fig', h('b', String(b)), h('span', s));
+    return h('section.plan-card',
+      h('div.plan-head', h('h2', duo('計画', 'Your plan for this song')), h('span.plan-level.' + P.level, P.levelText)),
+      P.intro ? h('div.plan-intro', h('p', P.intro), P.listen ? h('p', h('b', 'Listen for: '), P.listen) : null, h('p.fine', 'From ' + (P.by || 'Kotohana') + (P.by === 'Claude' ? '' : ', the AI on this device: it can be wrong.'))) : null,
+      h('div.figures', fig(P.known + '%', 'of its words you know'), fig(P.words.fresh, 'new words'), fig(P.kanji.n, 'kanji' + (P.kanji.hard ? ' (' + P.kanji.hard + ' advanced)' : '')), fig('~' + P.total + ' min', 'in all')),
+      P.words.key.length ? h('div.plan-words', h('h3', 'Words to learn first'), h('ul.plan-chips', P.words.key.map(w => h('li', { title: w.g || '' }, h('b', { lang: 'ja' }, w.w), w.r && w.r !== w.w ? h('small', { lang: 'ja' }, w.r) : null, h('span', w.g || ''))))) : null,
+      P.grammar.length ? h('div.plan-gram', h('h3', 'Grammar you will meet'), h('ul.plan-chips', P.grammar.map(g => h('li', h('b', { lang: 'ja' }, g.p), h('span', g.m))))) : null,
+      h('div.plan-days', h('h3', 'A schedule'), h('ol', P.days.map((d, k) => h('li' + (d.final ? '.final' : ''),
+        h('b', 'Day ' + (k + 1)), ' ',
+        d.final ? 'Final test, then talk about the song with Kotohana (about 10 min)' + (m.final && m.final.best != null ? ' ✓' : '') : 'Stage' + (d.stages.length > 1 ? 's ' : ' ') + d.stages.map(n => n + 1).join(', ') + ': learn the lines, play, take the stage test (about ' + d.min + ' min)' + (d.stages.every(done) ? ' ✓' : ''))))),
+      o.actions || null);
+  }
+};
 
 /* ===== 60-ai.js ===== */
 /* ---------- 60-ai: line-by-line analysis, tutoring and grading by Claude ----------
@@ -15648,7 +16879,7 @@ const AI = {
       const batch = want.slice(k, k + 6), refs = {};
       for (const i of batch) { const L = m.lines[i]; if (L.en) refs[i] = L.en; }
       try {
-        const r = await sampler.json(Local.deepenPrompt(m, batch, refs), { signal: o.signal, max: 110 * batch.length + 120, schema: Local.SCHEMA.deepen });
+        const r = await sampler.json(Local.deepenPrompt(m, batch, refs), { signal: o.signal, background: o.background, max: 110 * batch.length + 120, schema: Local.SCHEMA.deepen });
         const arr = Array.isArray(r && r.lines) ? r.lines : Array.isArray(r) ? r : [];
         arr.forEach((x, j) => { if (!x) return; let i = Number(x.i); if (batch.indexOf(i) === -1) i = batch[j]; if (i != null && !got.has(i)) put(i, x); });
       } catch (e) { if (e && e.code === 'cancelled') throw e; error = e; }
@@ -15658,7 +16889,7 @@ const AI = {
     if (!o.only) {
       try {
         const rows = all.map(i => m.lines[i].jp + (got.get(i) && got.get(i).en ? ' = ' + got.get(i).en : ''));
-        const r = await sampler.json(Local.recapPrompt(m, rows), { signal: o.signal, max: 700, schema: Local.SCHEMA.recap });
+        const r = await sampler.json(Local.recapPrompt(m, rows), { signal: o.signal, background: o.background, max: 700, schema: Local.SCHEMA.recap });
         meta = this.normalizeMeta(Local.tidyRecap(r), st);
       } catch (e) { if (e && e.code === 'cancelled') throw e; error = error || e; }
     }
@@ -15845,9 +17076,27 @@ const Local = {
       why: obj({ why: s })
     };
   })(),
-  /** One request. Same shape as Claude's sample(): o.onText({text}) while streaming, o.json for a JSON object. */
-  async complete(prompt, o) {
+  /** One request at a time (the engine cannot run two). Requests marked background wait behind the learner's own. */
+  _q: [], _running: false,
+  complete(prompt, o) {
     o = o || {};
+    return new Promise((resolve, reject) => {
+      const job = { bg: !!o.background, run: () => this._complete(prompt, o), resolve, reject };
+      if (job.bg) this._q.push(job); else { const k = this._q.findIndex(j => j.bg); if (k < 0) this._q.push(job); else this._q.splice(k, 0, job); }
+      this._pump();
+    });
+  },
+  async _pump() {
+    if (this._running) return;
+    const job = this._q.shift(); if (!job) return;
+    this._running = true;
+    try { job.resolve(await job.run()); } catch (e) { job.reject(e); }
+    finally { this._running = false; this._pump(); }
+  },
+  /** One request. Same shape as Claude's sample(): o.onText({text}) while streaming, o.json for a JSON object. */
+  async _complete(prompt, o) {
+    o = o || {};
+    if (o.signal && o.signal.aborted) { const e = new Error('Stopped'); e.code = 'cancelled'; throw e; }
     const engine = await this.start();
     const info = this.modelInfo(this.model);
     const messages = info.noSystem ? [{ role: 'user', content: this.SYSTEM + '\n\n' + prompt }] : [{ role: 'system', content: this.SYSTEM }, { role: 'user', content: prompt }];
@@ -17057,7 +18306,7 @@ function openSettings() {
     return el;
   };
   const check = (id, key) => h('input', { type: 'checkbox', id, checked: !!s[key], onchange: e => set(key, e.target.checked) });
-  const voiceOpts = [['auto', 'Automatic']].concat(Voice.tts ? [['claude', 'Claude voice']] : [], Voice.voices.length ? [['browser', 'Browser voice']] : [], [['off', 'Off']]);
+  const voiceOpts = [['auto', 'Automatic']].concat(Voice.tts ? [['claude', 'Claude voice']] : [], Voice.voices.length ? [['browser', 'Browser voice']] : [], typeof Kokoro !== 'undefined' && Kokoro.installed ? [['kokoro', 'Kokoro (on this device)']] : [], [['off', 'Off']]);
   const lvSel = h('select', { id: 'set-level', onchange: e => { Game.p.level = e.target.value; Game.touch(); } }, LEVELS.map(l => h('option', { value: l.id, selected: Game.p.level === l.id }, l.label)));
   const body = [
     h('section', h('h3', 'Learning'),
@@ -17079,10 +18328,11 @@ function openSettings() {
       field('Voice', Voice.available() ? 'Used for words, and for lines that have no audio clip.' : 'No Japanese voice is available in this view.', select('set-voice', 'voice', voiceOpts)),
       Voice.voices.length ? field('Browser voice', 'The natural ones sound best. Kotohana uses this voice too.', select('set-voiceuri', 'voiceURI', [['', 'The most natural here (' + Voice.label(Voice.sorted()[0]) + ')']].concat(Voice.sorted().map(v => [v.voiceURI, Voice.label(v)])))) : null,
       !Voice.voices.length && !Voice.available() ? h('p.notice', Voice.help()) : null,
+      typeof Kokoro !== 'undefined' ? Kokoro.section() : null,
       field('Speed', null, select('set-rate', 'rate', [[0.8, 'Slow'], [0.9, 'A little slow'], [1, 'Natural'], [1.1, 'A little fast']], Number)),
       field('Play the word after each review answer', 'The line from your song when there is one, otherwise the voice reads the word.', check('set-auto', 'autoSpeak')),
       field('Game sounds', 'Little chimes for right and wrong answers in Play mode.', check('set-sfx', 'sfx')),
-      Voice.available() ? h('div.btn-row', btn('Test the voice', { cls: 'small', icon: 'speaker', onclick: () => Voice.speak('こんにちは。ことはなです。今日もいっしょに、ゆっくりがんばりましょう。', { rate: 0.9 }) })) : null),
+      Voice.available() ? h('div.btn-row', btn('Test the voice', { cls: 'small', icon: 'speaker', onclick: () => Voice.speak('こんにちは。コトハナです。今日も一緒に、ゆっくり頑張りましょう。', { rate: 0.9 }) })) : null),
     PhoneApp.section(),
     h('section', h('h3', 'Your save'),
       h('p.fine', Store.mode === 'db' ? 'Progress is saved to your Claude account for this page and follows you across devices.'
@@ -17341,6 +18591,7 @@ Views.today = {
     if (!p.level) page.appendChild(this.welcome());
     page.appendChild(this.goal(d));
     page.appendChild(this.plan());
+    if (Views.make.available() && p.level) page.appendChild(h('section.make-today', h('h2', duo('新しい歌', 'Learn a new song')), makeBox({ id: 'today-make', label: 'Make a lesson', placeholder: 'Any song, “… opening”, or a YouTube link' })));
     page.appendChild(this.figures());
     root.appendChild(page);
   },
@@ -17444,13 +18695,11 @@ Views.library = {
     const page = h('div.page');
     page.appendChild(pageHead('教材', 'Library', 'Each song, scene or episode becomes a path of short stages with a test at the end.',
       btn('Add media', { cls: 'primary', icon: 'plus', onclick: () => App.go('import') })));
-    if (Views.find.available()) {
-      const q = h('input#lib-find', { type: 'search', placeholder: 'Anime or song, e.g. Steel Ball Run', autocomplete: 'off', enterkeyhint: 'search', 'aria-label': 'Find an anime song' });
-      const go = () => App.go('find', { q: q.value.trim() });
-      q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
-      page.appendChild(h('section.find-card', h('div', h('h2', duo('探す', 'Find any anime song')),
-        h('p.sub', 'Japanese lyrics with an English translation and the music video, from animesonglyrics.com.')),
-        h('div.find-form', q, btn('Search', { cls: 'primary', icon: 'next', onclick: go }))));
+    if (Views.make.available()) {
+      page.appendChild(h('section.find-card.make-card', h('div', h('h2', duo('作る', 'Make a lesson from any song')),
+        h('p.sub', 'Type or say a song’s name, an anime and “opening”, or paste a YouTube link. The lyrics, timing, translation and video are found for you, with a plan.')),
+        makeBox({ id: 'lib-make' }),
+        h('p.fine', 'Or ', h('a', { href: '#', onclick: e => { e.preventDefault(); App.go('find', {}); } }, 'browse anime song lists'), ' on animesonglyrics.com.')));
     }
     const folderCard = this.folderCard();
     if (folderCard) page.appendChild(folderCard);
@@ -17781,6 +19030,9 @@ Views.media = {
         m.credit ? h('p.fine', m.credit) : null),
       h('div.media-score', h('b', pr.stars + ' / ' + pr.maxStars), h('span', 'stars'))));
     page.appendChild(h('section#media-file.filebar'));
+    if (m.plan) page.appendChild(Plan.card(m));
+    else if (!m.sample && Offline.ready()) page.appendChild(h('div.tool-row.plan-make', h('div', h('h3', duo('計画', 'A plan for this song')), h('p.sub', 'How hard it is for you, the words to learn first, the grammar you will meet, and a schedule.')),
+      btn('Make a plan', { icon: 'next', onclick: async () => { m.plan = await Plan.make(m); await Lib.save(m); Plan.intro(m); App.refresh(); } })));
     const allStudied = m.stages.every(s => s.st >= 2);
     page.appendChild(h('section', h('h2', duo('道のり', 'The path')),
       h('ol.path', m.stages.map((st, n) => this.node(m, st, n)),
@@ -18921,7 +20173,30 @@ Views.theater = {
   /** Synced lyrics found online were timed to the album track; a music video can run longer (an intro, a story). */
   timingDoubt() {
     const m = this.T.m, d = Player.duration();
-    return !!(m.lrcDur && Player.isYouTube(m.id) && d > 0 && Math.abs(d - m.lrcDur) > 8);
+    if (m.offsetSet) return false;
+    return !!(m.lrcDur && Player.isYouTube(m.id) && ((d > 0 && Math.abs(d - m.lrcDur) > 6) || m.timingOff));
+  },
+  /** One tap fixes timing that is off by a constant (a music video with an intro): play, then tap as the first line starts. */
+  oneTap() {
+    const T = this.T, m = T.m, i0 = m.lines.findIndex(l => l.a != null && !l.gap && JP.hasJapanese(l.jp));
+    if (i0 < 0) return;
+    T.tap = { i0 };
+    Player.playFrom(m.id, Math.max(0, m.lines[i0].a + this.off() - 15));
+    this.drawPanel();
+  },
+  tapNow() {
+    const T = this.T, m = T.m; if (!T.tap) return;
+    const L = m.lines[T.tap.i0], off = Math.round((Player.time() - 0.25 - L.a) * 10) / 10;
+    m.offset = off; m.offsetSet = 1; delete m.timingOff; Lib.save(m);
+    T.tap = null;
+    toast('Synced: the lines now start ' + Math.abs(off).toFixed(1) + ' s ' + (off >= 0 ? 'later' : 'earlier') + '. Fine-tune on the lesson map if needed.', 'good');
+    this.drawPanel();
+  },
+  tapCard() {
+    const T = this.T, L = T.m.lines[T.tap.i0];
+    return h('div.notice.tap-sync', h('b', 'Listen, and tap the moment this line starts:'),
+      h('p.tap-line', { lang: 'ja' }, L.jp),
+      h('div.btn-row', btn('Now!', { cls: 'primary tap-now', onclick: () => this.tapNow() }), btn('Start again', { cls: 'small ghost', onclick: () => this.oneTap() }), btn('Cancel', { cls: 'small ghost', onclick: () => { T.tap = null; Player.pause(); this.drawPanel(); } })));
   },
   watchPanel() {
     const T = this.T, m = T.m, w = m.watch || { n: 0, hist: [] };
@@ -18939,8 +20214,8 @@ Views.theater = {
       h('h2', duo('観る', 'Watch')),
       h('p.sub', 'Play it through the way a fan would. Tap any word on the current line to look it up: the video waits for you.'),
       untimed && this.hasMedia() ? this.syncCard() : null,
-      !untimed && this.timingDoubt() ? h('div.notice', h('b', 'The timing may be off. '), 'The lyrics were timed to the ' + fmtClock(m.lrcDur) + ' album track, but this video runs ' + fmtClock(Player.duration()) + '. If the lines run early or late, tap along once to time them to the video.',
-        h('div.btn-row', btn('Tap along to fix it', { cls: 'small primary', icon: 'sync', onclick: () => App.go('sync', { id: m.id }) }))) : null,
+      T.tap ? this.tapCard() : !untimed && this.timingDoubt() ? h('div.notice', h('b', 'The timing may be off. '), 'The lyrics were timed to a ' + fmtClock(m.lrcDur) + ' version, but this video runs ' + fmtClock(Player.duration() || m.ytDur || 0) + '. If the lines run early or late, sync them in one tap.',
+        h('div.btn-row', btn('Sync in one tap', { cls: 'small primary', icon: 'sync', onclick: () => this.oneTap() }), btn('Time every line', { cls: 'small ghost', onclick: () => App.go('sync', { id: m.id }) }))) : null,
       h('div.th-stats',
         h('div', h('b', todayMin + ' min'), h('span', 'immersion today')),
         h('div', h('b', here + ' min'), h('span', 'with this lesson')),
@@ -20152,6 +21427,119 @@ Views.find = {
   }
 };
 
+/* ===== 77-ui-make.js ===== */
+/* ---------- 77-ui-make: "Make a lesson" from a song name, a spoken name or a YouTube link ---------- */
+'use strict';
+
+const MAKE_STEPS = [['understand', 'Understanding your request'], ['find', 'Finding the song'], ['video', 'Choosing the video'], ['lyrics', 'Taking the lyrics'],
+  ['translate', 'Translations'], ['build', 'Building the lesson'], ['plan', 'Breakdown and plan']];
+
+/** The box for asking: a name or a link, or say it. Used on the Library and Today screens and here. */
+function makeBox(o) {
+  o = o || {};
+  const q = h('input.make-q', { type: 'search', value: o.q || '', placeholder: o.placeholder || 'A song, an anime opening, or a YouTube link', autocomplete: 'off', enterkeyhint: 'go', 'aria-label': 'Song name or YouTube link', id: o.id || null });
+  const go = () => { const v = q.value.trim(); if (!v) { q.focus(); return; } if (o.onGo) o.onGo(v); else App.go('make', { q: v, go: 1 }); };
+  q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
+  const mic = Mic.available() ? btn('', { cls: 'icon-btn make-mic', icon: 'mic', aria: 'Say the song’s name', title: 'Say the song’s name', onclick: e => {
+    const b = e.currentTarget;
+    if (b.classList.contains('on')) { Mic.stop(); return; }
+    Voice.stop(); Bus.emit('listening', true); b.classList.add('on'); q.placeholder = 'Listening… say the song’s name';
+    Mic.listen({ onPartial: t => { q.value = t; } }).then(t => { if (t) { q.value = t; go(); } }, () => toast('The microphone did not start. Type the name instead.'))
+      .finally(() => { b.classList.remove('on'); q.placeholder = o.placeholder || 'A song, an anime opening, or a YouTube link'; Bus.emit('listening', false); });
+  } }) : null;
+  return h('div.make-box', q, mic, btn(o.label || 'Make it', { cls: 'primary', icon: 'next', onclick: go }));
+}
+
+Views.make = {
+  M: null, tab: 'library',
+  available() { return BUILD.local && typeof DOMParser !== 'undefined'; },
+  render(root, params) {
+    params = params || {};
+    const page = h('div.page.narrow.make-page'); root.appendChild(page); this.page = page;
+    if (!this.M || (params.q && params.q !== this.M.q && params.go)) this.M = { q: params.q || '', busy: false, steps: {}, err: '', opts: null, r: null, id: null };
+    this.offs && this.offs.forEach(f => f());
+    this.offs = [Bus.on('maker', e => { if (this.M && e && e.id === this.M.id && App.cur === 'make') this.draw(); }), Bus.on('plan', id => { if (this.M && id === this.M.id && App.cur === 'make') this.draw(); })];
+    this.draw();
+    if (params.go && params.q && !this.M.busy && !this.M.id && !this.M.err) setTimeout(() => this.start(params.q), 0);
+  },
+  leave() { this.offs && this.offs.forEach(f => f()); this.offs = []; },
+  draw() {
+    const M = this.M, page = this.page; if (!page || !page.isConnected) return;
+    clear(page);
+    page.appendChild(backLink('Library', () => App.go('library')));
+    page.appendChild(pageHead('作る', 'Make a lesson', 'Name a song, say it, or paste a YouTube link. Kotonoha finds the song, its Japanese lyrics, timing and translation, and builds a lesson with a plan.'));
+    if (!this.available()) { page.appendChild(notice('', 'Making lessons from the internet works in the folder and phone versions of Kotonoha.')); return; }
+    if (!M.busy && !M.id) {
+      page.appendChild(makeBox({ q: M.q, id: 'make-q', onGo: v => this.start(v) }));
+      page.appendChild(h('div.make-try', h('span.fine', 'Try: '), ['紅蓮華', 'Gurenge by LiSA', 'Chainsaw Man opening', 'YOASOBI アイドル'].map(x => h('button.chip-btn', { type: 'button', onclick: () => this.start(x) }, x)),
+        h('span.fine', ' or paste a link like youtube.com/watch?v=…')));
+    }
+    if (M.busy || M.id || M.err || Object.keys(M.steps).length) page.appendChild(this.stepsEl());
+    if (M.opts) page.appendChild(this.chooseEl());
+    if (M.err) page.appendChild(h('div.notice.bad', h('b', 'That did not work. '), M.err, h('div.btn-row', btn('Try again', { cls: 'small', onclick: () => this.start(M.q) }), btn('Something else', { cls: 'small ghost', onclick: () => { this.M = { q: '', busy: false, steps: {}, err: '', opts: null, r: null, id: null }; this.draw(); } }))));
+    if (M.id) page.appendChild(this.doneEl());
+    if (!M.busy && !M.id) page.appendChild(h('p.fine.make-how', 'How it works: lyrics come from LRCLIB and animesonglyrics.com (with a person’s English translation when there is one), the video from YouTube. Only the song’s name or the link is sent. Videos are not downloaded: they stream from YouTube, so the lesson works offline except the video; if your media folder has the song, it is attached instead.'));
+  },
+  stepsEl() {
+    const M = this.M;
+    return h('ol.make-steps', MAKE_STEPS.map(([id, label]) => {
+      const s = M.steps[id] || { state: 'wait', text: '' };
+      const mark = { wait: '○', work: '', done: '✓', warn: '!', fail: '✗', ask: '?' }[s.state] || '○';
+      return h('li.' + s.state, h('span.make-mark', s.state === 'work' ? h('span.spin') : mark), h('div', h('b', label), s.text ? h('p', s.text) : null));
+    }));
+  },
+  chooseEl() {
+    const M = this.M;
+    const q = M.steps.find && M.steps.find.state === 'ask' && M.steps.find.text;
+    return h('section.make-choose', h('h2', q || 'Which one do you mean?'),
+      h('ul', M.opts.map((o, k) => h('li', h('button.find-row.song', { type: 'button', onclick: () => { const r = M.optsResolve; M.opts = null; this.draw(); r(k); } },
+        h('span.find-t', { lang: 'ja' }, o.title), h('span.fine', [o.artist, o.note, o.timed ? 'timed lyrics' : 'untimed', plural(o.lines, 'line')].filter(Boolean).join(' · ')))))),
+      btn('None of these', { cls: 'ghost small', onclick: () => { const r = M.optsResolve; M.opts = null; r(null); } }));
+  },
+  doneEl() {
+    const M = this.M, m = Lib.get(M.id); if (!m) return h('p', 'The lesson was made but cannot be found. Look in the Library.');
+    const bg = Maker._bg && Maker._bg.has(m.id);
+    const thumb = m.yt ? h('img.find-thumb', { src: 'https://i.ytimg.com/vi/' + m.yt + '/mqdefault.jpg', alt: '', loading: 'lazy', onerror: e => e.target.remove() }) : h('div.find-thumb.none', '♪');
+    const acts = h('div.btn-row',
+      btn('Start stage 1', { cls: 'primary', icon: 'play', onclick: () => App.go('theater', { id: m.id, mode: 'learn', n: 0 }) }),
+      isTimed(m) ? btn('Watch it first', { icon: 'eye', onclick: () => App.go('theater', { id: m.id, mode: 'watch' }) }) : null,
+      btn('Lesson map', { cls: 'ghost', onclick: () => App.go('media', { id: m.id }) }),
+      (m.fileName || m.yt) ? btn('Play in the background', { cls: 'ghost', icon: 'music', onclick: () => Bgm.start(m.id) }) : null,
+      btn('Make another', { cls: 'ghost', icon: 'plus', onclick: () => { this.M = { q: '', busy: false, steps: {}, err: '', opts: null, r: null, id: null }; this.draw(); } }));
+    return h('section.make-done',
+      h('div.make-song', thumb, h('div', h('h2', { lang: 'ja' }, m.title), h('p.sub', [m.artist, m.anime, m.theme].filter(Boolean).join(' · ')),
+        h('ul.find-facts',
+          h('li', h('b', String(m.lines.length)), ' lines' + (isTimed(m) ? ', timed: the words light up with the music' : ', not timed yet: tap along once in Watch')),
+          h('li', m.lines.filter(l => l.en).length ? '✓ ' + m.lines.filter(l => l.en).length + ' lines with a person’s translation' : '✗ No translation online'),
+          bg ? h('li', h('span.spin'), ' ' + AI.name() + ' is translating the other lines in the background') : null,
+          h('li', m.fileName ? '✓ Your own file plays, also offline' : m.yt ? '✓ The video streams from YouTube (needs the internet)' : '✗ No video: the voice reads the lines'),
+          h('li', '✓ Words, readings, grammar and translations are saved on this device')))),
+      m.plan ? Plan.card(m, { actions: acts }) : acts);
+  },
+  async start(q) {
+    q = String(q || '').trim(); if (!q || (this.M && this.M.busy)) return;
+    const M = this.M = { q, busy: true, steps: {}, err: '', opts: null, r: null, id: null };
+    this.draw();
+    const ui = {
+      step: (id, state, text) => { M.steps[id] = { state, text }; if (this.M === M && App.cur === 'make') this.draw(); },
+      choose: opts => new Promise(res => { M.opts = opts; M.optsResolve = res; if (App.cur === 'make') this.draw(); })
+    };
+    try {
+      const r = await Maker.run(q, ui);
+      M.r = r; M.id = r.lesson;
+      const m = Lib.get(M.id);
+      if (m) Plan.intro(m);
+      toast('Lesson ready: “' + (m ? m.title : '') + '”.', 'good');
+    } catch (e) {
+      console.warn(e);
+      M.err = e && e.code === 'cancelled' ? 'Stopped. Try the song’s Japanese title, add the artist, or paste the YouTube link.' : String((e && e.message) || e);
+      for (const [id] of MAKE_STEPS) if (M.steps[id] && M.steps[id].state === 'work') M.steps[id].state = 'fail';
+    }
+    M.busy = false;
+    if (this.M === M && App.cur === 'make') this.draw();
+  }
+};
+
 /* ===== 78-ui-review.js ===== */
 /* ---------- 78-ui-review: review sessions (the word garden) and the kana dojo ---------- */
 'use strict';
@@ -21327,6 +22715,12 @@ Views.guide = {
         h('li', h('b', 'Set it up once. '), 'Settings > Kotohana: pick a model and press Set up. It downloads once (about 1 to 2.5 GB, from Hugging Face) and then works with no connection. It needs WebGPU: Chrome or Edge on a computer, or Chrome on a recent Android phone. The larger models answer much better.'),
         h('li', h('b', 'Use it. '), 'In Learn: Ask Kotohana on a stage, Check my translation under your own, or ask about the line. On a lesson’s map, Tools > Kotohana on every stage does a whole song in one go. Lines that repeat are done once.'),
         h('li', h('b', 'Trust it like a classmate. '), 'It is far smaller than Claude and makes mistakes, more so with poetic lines. Everything it writes is labelled, its translation waits until you have tried your own, and a person’s translation from the lyrics page stays first.'))));
+    if (BUILD.local) page.appendChild(h('section', h('h2', duo('作る', 'A lesson from any song, on demand')),
+      h('ul.plain',
+        h('li', h('b', 'Ask for it. '), 'Library > Make a lesson, or Today > Learn a new song: type or say the song’s name, an anime and “opening” (with a number, or choose from its openings), an artist (choose from their songs), or paste a YouTube link.'),
+        h('li', h('b', 'What it does. '), 'It finds the Japanese lyrics and the timing made for that video’s length (LRCLIB), a person’s English translation matched line by line (animesonglyrics.com, checked against the lyrics so it is the same song), breaks every line down, and writes a plan: how hard the song is for you, the words to learn first, the grammar you will meet, and a schedule of about 20 minutes a day.'),
+        h('li', h('b', 'Why songs you choose. '), 'Material you want to hear again is material you will hear again. Comprehensible input works best a little above your level; the plan says whether a song is comfortable, a stretch or a challenge, so you can pick the next one well.'),
+        h('li', h('b', 'If the words run early or late. '), 'Music videos often start with an intro. In Watch, “Sync in one tap”: tap the moment the first line starts, and every line moves with it.'))));
     page.appendChild(h('section', h('h2', duo('話す', 'Talk: putting it into practice')),
       h('ul.plain',
         h('li', h('b', 'Choose a conversation. '), 'A scene (a café, a ramen shop, a convenience store, asking the way, meeting someone, weekend plans, anime), your own words from the garden, or a song from your library. Pick polite です/ます or casual speech.'),
@@ -21514,7 +22908,7 @@ async function boot(snap) {
     Bus.on('ai-ready', late); Bus.on('voice-ready', late); Bus.on('mic-ready', late);
     Bus.on('player-error', id => { toast(Player.isYouTube(id) ? 'The music video cannot play here. The voice will read the lines instead.' : 'This browser cannot play that file. The voice will read the lines instead.', 'bad'); if (App.cur === 'media') App.refresh(); });
     Bus.on('store-fallback', () => toast('Could not reach your saved progress. Working in this browser for now.', 'bad'));
-    Voice.init(); Mic.init(); AI.init();
+    Voice.init(); Mic.init(); AI.init(); Kokoro.init().catch(e => console.warn('kokoro', e));
     // the media folder is looked at in the background after a short wait: a big or slow folder must not hold up the game
     step = 'folder';
     const folderDone = Folder.init().catch(e => console.warn('folder', e));
