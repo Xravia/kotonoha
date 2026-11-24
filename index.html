@@ -15886,7 +15886,14 @@ const YT = {
   },
   /** A video's title, channel and length: the oEmbed answer is quick; the watch page (through the reader) has the length. */
   async info(id) {
-    return Net.cached('yt:' + id, 30 * Net.DAY, async () => {
+    try { const c = await Idb.kvGet('net:yt:' + id); if (c && c.v && c.v.duration && Date.now() - c.at < 30 * Net.DAY) return c.v; } catch (e) {}
+    const v = await this._info(id);
+    if (!v.duration && v.title) { try { const hit = (await this.search(v.title)).find(x => x.id === id); if (hit) { v.duration = hit.duration; v.views = hit.views; } } catch (e) {} }
+    if (v.duration) { try { Idb.kvSet('net:yt:' + id, { at: Date.now(), v }); } catch (e) {} }
+    return v;
+  },
+  async _info(id) {
+    return (async () => {
       const url = 'https://www.youtube.com/watch?v=' + id, out = { id, title: '', channel: '', duration: 0 };
       const [oe, page] = await Promise.allSettled([
         Net.json('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(url)).catch(() => Net.json('https://noembed.com/embed?url=' + encodeURIComponent(url))),
@@ -15900,8 +15907,9 @@ const YT = {
         if (!out.title) { const m = /<title>([^<]*)<\/title>/.exec(html); if (m) out.title = m[1].replace(/\s*-\s*YouTube\s*$/, ''); }
       }
       if (!out.title && !out.duration) throw new Error('YouTube did not say what this video is');
+      if (!out.duration) Web.cache.delete(url);
       return out;
-    });
+    })();
   }
 };
 
@@ -16386,7 +16394,7 @@ const Maker = {
       if (!song || !song.hasKanji) continue;
       const sigs = !lrcSig ? [] : Array.isArray(lrcSig) ? lrcSig : [lrcSig];
       const ovs = sigs.map(x => Names.overlap(x, song.kanji)), ov = ovs.length ? Math.max(...ovs) : null;
-      if (lrcSig ? ov >= 0.5 : c.score >= 4) return Object.assign(song, { overlap: ov, how: c.why, matched: ovs.indexOf(ov) });
+      if (lrcSig ? ov >= 0.5 : c.score >= 4) return Object.assign(song, { overlap: ov, how: c.why, matched: ovs.length && ovs[0] >= 0.5 ? 0 : ovs.indexOf(ov) });
     }
     return null;
   },
@@ -16572,7 +16580,9 @@ const Maker = {
       if (asl && !group && asl.artist) { try { const g2 = await this.lrcFind([{ title: asl.title, artist: asl.artist, romaji: [asl.title] }]); const sig = Names.lyricSig(asl.kanji); group = g2.find(g => Names.overlap(g.sig, sig) >= 0.5) || null; } catch (e) {} }
     }
     if (!group && !asl) throw new Error('No Japanese lyrics were found for “' + (want.title || req.text) + '”. Try the title in Japanese, add the artist, or paste the YouTube link.');
-    const songTitle = (group && group.title) || (asl && asl.title) || want.title;
+    let songTitle = (group && group.title) || (asl && asl.title) || want.title;
+    // entries with an odd name ("♥ TOKYO GHOUL") for the song asked for by its name: keep the name asked for
+    if (group && asl && req.kind === 'text' && want.text && Names.simName(songTitle, asl.title) < 0.5 && Names.simName(asl.title, want.text) >= 0.8) songTitle = want.text;
     const artist = (group && group.artist) || (asl && asl.artist) || want.artist;
     R.song = { title: songTitle, artist, anime: (asl && asl.anime) || want.anime || '', theme: (asl && asl.theme) || (want.theme ? want.theme.kind + (want.theme.n ? ' ' + want.theme.n : '') : ''), lrcEntries: group ? group.rows.length : 0, asl: asl ? asl.url : null, aslOverlap: asl ? asl.overlap : null };
     step('find', 'done', '“' + songTitle + '”' + (artist ? ' by ' + artist : '') + (R.song.anime ? ' · ' + R.song.anime : '') + (R.song.theme ? ' · ' + R.song.theme : ''));
