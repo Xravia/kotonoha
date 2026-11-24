@@ -16221,18 +16221,39 @@ const Maker = {
       if (String(v.title).split(/\s*[/・]\s*/).length >= 3 || /メドレー|medley|\bmix\b|集|\ball\s+(?:op|opening|ed|ending)s?\b|全[^\s]{0,4}(?:OP|ED|主題歌)/i.test(v.title)) continue;   // a compilation names other songs
       for (const r of Names.latin(v.title, skip.concat([Names.channel(v.channel), v.channel])).concat(sp.romaji || [])) {
         const am = /^(.+?)\s+(?:OP|ED|Opening|Ending)\b/i.exec(Names.clean(r));
-        if (am && am[1].length >= 4) { an.set(am[1], (an.get(am[1]) || 0) + 1); continue; }
+        if (am && am[1].length >= 4) continue;                       // "Jujutsu Kaisen OP": the anime, counted below
         const x = Names.clean(r).replace(/\s*[-–—]\s*(?:AI|MV|PV)\b.*$/i, '');
         if (!/^[\x20-\x7e\u00c0-\u024f’]+$/.test(x)) continue;
         if ([v.channel, sp.artist].some(k => k && String(k).toLowerCase().indexOf(x.toLowerCase()) !== -1)) continue;
         if (x.length < 4 || /^[A-Z]{2,4}$/.test(x) || Names.isNoise(x) || this.JUNK.test(x) || Names.VERSION.test(x) || Names.LYRICVID.test(x) || skip.some(k => Names.sameName(k, x) || x.toLowerCase().indexOf(String(k).toLowerCase()) !== -1)) continue;
         const k = x.toLowerCase(); al.set(k, { x, n: (al.has(k) ? al.get(k).n : 0) + 1 });
       }
-      const a = Names.anime(v.title); if (a) an.set(a, (an.get(a) || 0) + 1);
+    }
+    // the anime: from every result (they are about this song), its name in letters first, same names counted together
+    const tidyA = x => String(x || '').replace(/[\s\-–—:：|｜/【『「]+$/, '').replace(/^[\s【『「]+/, '').replace(/\s*(?:season|part|cour|第)\s*\d+.*$/i, '').trim();
+    for (const v of vids.slice(0, 24)) {
+      const a = tidyA(Names.anime(v.title)); if (a && a.length <= 40 && !/[】』」]/.test(a)) { const k = a.toLowerCase(); an.set(k, { a, n: (an.has(k) ? an.get(k).n : 0) + 1 }); }
+      for (const r of Names.latin(v.title, [])) { const am = /^(.+?)\s+(?:OP|ED|Opening|Ending)\s*\d*\b/i.exec(Names.clean(r)); if (am && am[1].length >= 4 && !this.JUNK.test(am[1])) { const a = tidyA(am[1]), k = a.toLowerCase(); an.set(k, { a, n: (an.has(k) ? an.get(k).n : 0) + 1 }); } }
+    }
+    const animes = Array.from(an.values()).sort((x, y) => (JP.hasJapanese(x.a) - JP.hasJapanese(y.a)) || y.n - x.n);
+    const anime = animes.length ? animes[0].a : '';
+    // titles that name the artist and the anime in letters but not the song in Japanese: what is left is the song's name
+    // ("Jujutsu Kaisen OP1 - Eve - Kaikai Kitan Lyrics")
+    const artistL = skip.find(k => /^[\x20-\x7e]+$/.test(k) && k.trim().length >= 2), animeL = animes.map(x => x.a).find(a => /^[\x20-\x7e]+$/.test(a));
+    if (artistL && animeL) {
+      const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), byArtist = new RegExp('(?:\\bby\\s+)?\\b' + esc(artistL.trim()) + '\\b', 'ig');
+      for (const v of vids.slice(0, 24)) {
+        const T = Names.clean(v.title);
+        if (T.toLowerCase().indexOf(low) !== -1 || !new RegExp('\\b' + esc(artistL.trim()) + '\\b', 'i').test(T) || T.toLowerCase().indexOf(animeL.toLowerCase()) === -1) continue;
+        if (T.split(/\s*[/・]\s*/).length >= 3 || Names.VERSION.test(T) || Names.FANEDIT.test(v.title)) continue;
+        for (const piece of T.split(/\s+[-–—|｜:]\s+|["“”「」『』()（）\[\]【】]/)) {
+          const x = Names.stripNoise(piece.replace(new RegExp(esc(animeL), 'ig'), ' ').replace(byArtist, ' ')).replace(/\b(op|ed|opening|ending|full|lyrics?|theme|season|\d+)\b/ig, ' ').replace(/\s+/g, ' ').trim();
+          if (x.length < 4 || !/^[\x20-\x7e\u00c0-\u024f’]+$/.test(x) || this.JUNK.test(x) || Names.isNoise(x)) continue;
+          const k = x.toLowerCase(); al.set(k, { x, n: (al.has(k) ? al.get(k).n : 0) + 1 });
+        }
+      }
     }
     const like = x => Names.simName(x, title) >= 0.5 ? 1 : 0;
-    const anime = (Array.from(an.entries()).sort((a, b) => (JP.hasJapanese(a[0]) - JP.hasJapanese(b[0])) || b[1] - a[1]).map(e => e[0])[0] || '')
-      .replace(/[\s\-–—:：|｜/【『「]+$/, '').replace(/\s*(?:season|part|cour|第)\s*\d+.*$/i, '').trim();
     return { aliases: Array.from(al.values()).sort((a, b) => like(b.x) - like(a.x) || b.n - a.n).map(o => o.x).slice(0, 4), anime };
   },
   /** Words in video titles that are not a song's name. */
