@@ -15911,7 +15911,7 @@ const Names = {
   NOISE: /\b(?:official\s*(?:music\s*)?video|official\s*audio|music\s*video|music\s*clip|lyrics?\s*video|lyric|lyrics|full\s*ver(?:sion)?|tv\s*(?:size|ver(?:sion)?)|creditless|non[- ]?credit|clean|hd|hq|4k|1080p|mv|pv|eng\s*sub(?:bed)?|english\s*sub(?:titles?)?|romaji|kan\/rom\/eng|audio|official(?![぀-ヿ一-鿿])|ver\.?)\b|歌詞付き|歌詞|ノンクレジット|公式|フル|ＭＶ|ＰＶ|ミュージックビデオ|ＴＶサイズ|TVサイズ/gi,
   /** A version that is not the studio recording: lines will not keep time with LRCLIB. */
   VERSION: /cover|カバー|歌唱|を歌う|切り抜き|ものまね|アカペラ|a\s*cappella|替え歌|parody|fan\s*-?made|ツアー|\btour\b|ドーム|\bdome\b|\barena\b|アリーナ|武道館|公演|\bsession\b|セッション|レッスン|\blesson\b|解説|歌い方|ボイトレ|ボイストレーナー|弾き語り|[(（](?![^)）]*\bfull\b)[^)）]*\bver\.?\s*[)）]|\bAI\s*(?:cover|カバー)|歌ってみた|弾いてみた|叩いてみた|踊ってみた|piano|ピアノ|instrumental|inst\.?\b|off\s*vocal|karaoke|カラオケ|remix|nightcore|slowed|sped\s*up|reverb|8d\b|live|ライブ|first\s*take|acoustic|アコースティック|orchestra|オーケストラ|music\s*box|オルゴール|reaction|tutorial|guitar|ギター|bass|drum|ドラム|メドレー|medley|mashup|english\s*ver|英語/i,
-  clean(s) { return String(s || '').normalize('NFKC').replace(/\s+/g, ' ').trim(); },
+  clean(s) { return String(s || '').normalize('NFKC').replace(/''|’’|‘‘/g, '"').replace(/\s+/g, ' ').trim(); },
   isNoise(s) { return new RegExp(this.NOISE.source, 'i').test(s); },
   stripNoise(s) { return String(s || '').replace(new RegExp(this.NOISE.source, 'gi'), ' '); },
   /** Channels that upload anime openings but are not the singer. */
@@ -16190,6 +16190,8 @@ const Maker = {
       const count = (f) => { const c = new Map(); for (const r of g.rows) { const v = Names.clean(f(r)); if (v) c.set(v, (c.get(v) || 0) + 1); } return Array.from(c.entries()).sort((a, b) => b[1] - a[1]).map(x => x[0]); };
       g.titles = count(r => Lyrics.titleFrom(r).replace(/\s*[-–]\s*(YOASOBI|.*Instrumental.*)$/i, ''));
       g.artists = count(r => r.artist.replace(/\s*[(（][^)）]*[)）]/g, ''));
+      const realArtists = g.artists.filter(a => !/music\s*video|official\s*video|[「」『』]/i.test(a));
+      if (realArtists.length) g.artists = realArtists.concat(g.artists.filter(a => realArtists.indexOf(a) === -1));
       g.names = uniq(g.titles.slice(0, 6).map(t => Names.tidyTitle(t, g.artists)).filter(Boolean));
       // an entry named after its artist ("米津玄師") names no song
       const isArtist = n => g.artists.slice(0, 4).some(a => a && (Names.sameName(n, a) || (n.length >= 2 && a.indexOf(n) !== -1)));
@@ -16216,11 +16218,12 @@ const Maker = {
     for (const v of vids.slice(0, 24)) {
       const sp = Names.split(v.title, v.channel);
       if (!low || !(String(v.title).toLowerCase().indexOf(low) !== -1 || Names.sameName(sp.title, title))) continue;
-      if (String(v.title).split(/\s*[/|｜・]\s*/).length >= 3 || /メドレー|medley|\bmix\b|集|\ball\s+(?:op|opening|ed|ending)s?\b|全[^\s]{0,4}(?:OP|ED|主題歌)/i.test(v.title)) continue;   // a compilation names other songs
+      if (String(v.title).split(/\s*[/・]\s*/).length >= 3 || /メドレー|medley|\bmix\b|集|\ball\s+(?:op|opening|ed|ending)s?\b|全[^\s]{0,4}(?:OP|ED|主題歌)/i.test(v.title)) continue;   // a compilation names other songs
       for (const r of Names.latin(v.title, skip.concat([Names.channel(v.channel), v.channel])).concat(sp.romaji || [])) {
         const am = /^(.+?)\s+(?:OP|ED|Opening|Ending)\b/i.exec(Names.clean(r));
         if (am && am[1].length >= 4) { an.set(am[1], (an.get(am[1]) || 0) + 1); continue; }
         const x = Names.clean(r).replace(/\s*[-–—]\s*(?:AI|MV|PV)\b.*$/i, '');
+        if (!/^[\x20-\x7e\u00c0-\u024f’]+$/.test(x)) continue;
         if ([v.channel, sp.artist].some(k => k && String(k).toLowerCase().indexOf(x.toLowerCase()) !== -1)) continue;
         if (x.length < 4 || /^[A-Z]{2,4}$/.test(x) || Names.isNoise(x) || this.JUNK.test(x) || Names.VERSION.test(x) || Names.LYRICVID.test(x) || skip.some(k => Names.sameName(k, x) || x.toLowerCase().indexOf(String(k).toLowerCase()) !== -1)) continue;
         const k = x.toLowerCase(); al.set(k, { x, n: (al.has(k) ? al.get(k).n : 0) + 1 });
@@ -16242,6 +16245,15 @@ const Maker = {
     if (anime && (Names.sameName(t, anime) || Names.simName(t, anime) >= 0.8)) return '';
     if ([sp.artist, Names.channel(v.channel), v.channel].some(a => a && (Names.sameName(t, a) || String(a).indexOf(t) !== -1))) return '';
     return t;
+  },
+  /** A name that is an artist's (as LRCLIB or a channel writes it), not a song's. */
+  artistLike(t) {
+    const A = (this._artists || []).filter(a => a && a.length >= 2), x = String(t || '').trim();
+    if (!x) return true;
+    if (A.some(a => Names.sameName(a, x) || a.indexOf(x) !== -1)) return true;
+    let rest = x; for (const a of A) if (rest.indexOf(a) !== -1) rest = rest.split(a).join(' ');
+    rest = rest.replace(/\s+/g, ' ').trim();
+    return rest !== x && (!rest || A.some(a => a.indexOf(rest) !== -1));
   },
   /** A group of entries is this song: the same name, not merely a name inside a longer one. */
   close(g, t) {
@@ -16308,7 +16320,7 @@ const Maker = {
     for (const n of names) {
       if (n.title && !JP.hasJapanese(n.title)) add(n.title, 10);
       for (const r of n.romaji || []) if (!this.JUNK.test(r)) add(r, Names.simName(r, n.title || '') >= 0.5 ? 9 : 5);   // from video titles: "Gurenge", "Kaikai Kitan"
-      if (n.artist && !JP.hasJapanese(n.artist)) add(n.artist, 8);                                   // the artist's songs are listed
+      if (n.artist && !JP.hasJapanese(n.artist)) add(n.artist, n.artist.replace(/\s/g, '').length >= 4 ? 8 : 3);   // the artist's songs are listed
       if (n.title && JP.hasJapanese(n.title)) {
         const w = Names.romajiWords(n.title);
         if (w) { add(w.split(' ').slice(0, 4).join(' '), 7); const long = w.split(' ').filter(x => x.length >= 5).sort((a, b) => b.length - a.length)[0]; if (long) add(long, 6); }
@@ -16432,7 +16444,9 @@ const Maker = {
         }
         const nth = want.theme && want.theme.n ? ofAnime.find(v => { const th = Names.theme(v.title); return th && th.n === want.theme.n && th.kind === want.theme.kind; }) : null;
         const top = nth || ofAnime[0] || vids.find(v => Names.simName(Names.anime(v.title) || v.title, want.anime) >= 0.4) || vids[0];
-        if (top) { const sp = Names.split(top.title, top.channel); want.title = sp.title; want.artist = want.artist || (Names.VERSION.test(top.title) ? '' : sp.artist); want.romaji = uniq((want.romaji || []).concat(sp.romaji, Names.latin(top.title, [want.anime]))); R.notes.push('theme via YouTube: ' + top.title); }
+        if (top) { const sp = Names.split(top.title, top.channel), named = sp.artist && String(top.title).toLowerCase().indexOf(sp.artist.toLowerCase()) !== -1;
+          want.title = sp.title; want.artist = want.artist || (Names.VERSION.test(top.title) || !named ? '' : sp.artist);   // the uploader's channel is not the singer
+          want.romaji = uniq((want.romaji || []).concat(sp.romaji, Names.latin(top.title, [want.anime]))); R.notes.push('theme via YouTube: ' + top.title); }
       } catch (e) { R.notes.push('youtube search: ' + (e.message || e)); }
     }
     const names = [want];
@@ -16486,7 +16500,7 @@ const Maker = {
     };
     // an artist or an anime: their songs that YouTube shows, the most watched first
     if (list && !asl) {
-      const pool = ranked.filter(x => x.g.jp >= 0.5 && !x.g.junk), theirs = [];
+      const pool = ranked.filter(x => x.g.jp >= 0.5 && !x.g.junk && !this.artistLike(x.g.title)), theirs = [];
       if (list.by === 'anime') {
         // each of the anime's songs on YouTube, in YouTube's order, with the best lyrics found for it
         for (const v of list.vids) {
