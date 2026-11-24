@@ -16005,7 +16005,7 @@ const Talk = {
 
   /* ----- prompts: short, one job each ----- */
   head(s) {
-    const sc = this.scene(s), lines = ['You are Kotohana (言花), ' + sc.role + '. You are chatting in Japanese with a learner who is ' + AI.levelText()];
+    const sc = this.scene(s), lines = ['You are Kotohana (言花), ' + sc.role + '. You are chatting in Japanese with a learner of Japanese who is ' + AI.levelText()];
     if (s.topic === 'words' && s.targets.length) lines.push('The learner is practising these words: ' + s.targets.map(t => t.w + (t.r && t.r !== t.w ? '（' + t.r + '）' : '') + ' = ' + t.g).join(', ') + '.');
     if (s.topic === 'song' && s.lines && s.lines.length) lines.push('Some lines from it (Japanese = English):', s.lines.join('\n'));
     return lines;
@@ -16013,18 +16013,18 @@ const Talk = {
   history(s, max) {
     const rows = [];
     for (const t of s.turns.slice(-(max || 8))) {
-      if (t.who === 'k') rows.push('Kotohana: ' + t.ja);
+      if (t.who === 'k') rows.push('You: ' + t.ja);
       else if (!t.say) rows.push('Learner: ' + (t.ja && !t.nat ? t.ja : t.text));
     }
     return rows.join('\n').slice(-1400);
   },
   replyPrompt(s, first) {
     return this.head(s).concat(['',
-      first ? 'Start the conversation.' : 'Conversation so far (newest last):\n' + this.history(s),
+      first ? 'Start the conversation: greet the learner and ask one easy first question.' : 'Conversation so far (newest last):\n' + this.history(s),
       '',
-      'Write Kotohana’s next line in ' + this.styleText(s) + ': one or two short sentences with simple words, ending with one easy question the learner can answer. No romaji.' +
+      (first ? 'Write it' : 'Reply to what the learner just said, staying in your role,') + ' in ' + this.styleText(s) + ': one or two short sentences with simple words, then one easy question the learner can answer. No romaji.' +
         (s.topic === 'words' && s.targets.length ? ' Where it fits naturally, use one of the learner’s words or ask something that invites it.' : ''),
-      'Reply with a JSON object: "ja" is Kotohana’s line in Japanese and "en" is its translation into English.']).join('\n');
+      'Reply with a JSON object: "ja" is your line in Japanese and "en" is its translation into English.']).join('\n');
   },
   /** Small models rewrite correct sentences unless shown that copying is right: examples, and "change as little as possible". */
   recastPrompt(s, text) {
@@ -16034,12 +16034,13 @@ const Talk = {
   },
   sayPrompt(s, text) {
     return ['In a Japanese conversation (' + this.scene(s).en.toLowerCase() + '), a learner who is ' + AI.levelText() + ' wants to say: "' + text.slice(0, 300) + '"',
-      'Give a simple, natural way to say it in ' + this.styleText(s) + '.',
+      'Give a simple, natural way to say it in ' + this.styleText(s) + ', all in Japanese.',
+      'Examples: "Water, please." → {"ja":"みずをください。","en":"Water, please."}  "Where is the station?" → {"ja":"えきはどこですか。","en":"Where is the station?"}',
       'Reply with a JSON object: "ja" is the Japanese and "en" is a close English gloss of your Japanese.'].join('\n');
   },
   hintPrompt(s) {
     return this.head(s).concat(['', 'Conversation so far (newest last):\n' + this.history(s), '',
-      'Suggest one short, simple sentence the learner could say next, answering Kotohana, in ' + this.styleText(s) + '.',
+      'Suggest one short, simple sentence the learner could say next, answering you, in ' + this.styleText(s) + '.',
       'Reply with a JSON object: "ja" is the sentence in Japanese and "en" is its English translation.']).join('\n');
   },
   whyPrompt(a, b) {
