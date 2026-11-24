@@ -16221,6 +16221,7 @@ const Maker = {
         const am = /^(.+?)\s+(?:OP|ED|Opening|Ending)\b/i.exec(Names.clean(r));
         if (am && am[1].length >= 4) { an.set(am[1], (an.get(am[1]) || 0) + 1); continue; }
         const x = Names.clean(r).replace(/\s*[-–—]\s*(?:AI|MV|PV)\b.*$/i, '');
+        if ([v.channel, sp.artist].some(k => k && String(k).toLowerCase().indexOf(x.toLowerCase()) !== -1)) continue;
         if (x.length < 4 || /^[A-Z]{2,4}$/.test(x) || Names.isNoise(x) || this.JUNK.test(x) || Names.VERSION.test(x) || Names.LYRICVID.test(x) || skip.some(k => Names.sameName(k, x) || x.toLowerCase().indexOf(String(k).toLowerCase()) !== -1)) continue;
         const k = x.toLowerCase(); al.set(k, { x, n: (al.has(k) ? al.get(k).n : 0) + 1 });
       }
@@ -16341,8 +16342,10 @@ const Maker = {
       const t = titles.length ? Math.max(...titles.map((w, i) => Names.simName(ct, w) * (i && Names.simName(w, want.title || '') < 0.5 ? 0.7 : 1))) : 0;
       const a = want.artist && c.artist ? Names.simName(c.artist, want.artist) : 0;
       const an = want.anime && c.anime && !JP.hasJapanese(want.anime) ? Names.simName(c.anime, want.anime) : 0;
-      return Object.assign(c, { score: t * 5 + a * 3 + an * 2 + Math.min(2, (c.hits || 1) - 1) - (/english\s*ver|instrumental|off\s*vocal/i.test(c.title) ? 3 : 0) });
+      const odd = /english\s*ver|instrumental|off\s*vocal/i.test(c.title) || Names.VERSION.test(c.title) || c.title.split(/\s*\/\s*/).length >= 2 ? 3 : 0;
+      return Object.assign(c, { score: t * 5 + (t >= 0.99 ? 1 : 0) + a * 3 + an * 2 + Math.min(2, (c.hits || 1) - 1) - odd });
     }).sort((x, y) => y.score - x.score);
+    this._aslTrace = 'queries ' + uniq(qs.map(x => x[0])).slice(0, 4).join(' / ') + ' → ' + list.length + ' songs; top ' + list.slice(0, 4).map(c => c.title + ' ' + c.score.toFixed(1)).join(', ');
     for (const c of list.slice(0, lrcSig ? 4 : 2)) {
       if (!lrcSig && c.score < 3) break;
       let song = null;
@@ -16441,7 +16444,7 @@ const Maker = {
     if (vRes.status === 'fulfilled') vids = vRes.value; else R.notes.push('youtube search: ' + (vRes.reason && vRes.reason.message || vRes.reason));
     // what YouTube calls this song (the Japanese title, romaji) helps LRCLIB and animesonglyrics find it
     const vArtist = v => Names.split(v.title, v.channel).artist || Names.channel(v.channel);
-    this._artists = uniq([].concat(...groups.map(g => g.artists.slice(0, 3)), vids.map(v => Names.channel(v.channel)), vids.map(v => Names.split(v.title, v.channel).artist)).filter(a => a && a.length >= 2));
+    this._artists = uniq([].concat(...groups.map(g => g.artists.slice(0, 3)), vids.map(v => Names.channel(v.channel))).filter(a => a && a.length >= 2));
     // only an artist named ("YOASOBI", "songs by LiSA"): YouTube's results are that artist's songs
     if (!list && req.kind === 'text' && !want.anime) {
       const top = vids.slice(0, 8), byName = top.filter(v => Names.sameName(vArtist(v), want.text) || Names.sameName(Names.channel(v.channel), want.text)).length;
@@ -16468,6 +16471,7 @@ const Maker = {
     if (ytNames.length && (list || !ranked.length || ranked[0].s < 10)) {
       try { groups = await this.lrcFind([want].concat(ytNames), list ? 12 : 8); ranked = groups.map(g => ({ g, s: this.scoreGroup(g, want, vids) })).sort((a, b) => b.s - a.s); R.notes.push('second LRCLIB pass with ' + ytNames.map(n => n.title).join(', ')); } catch (e) {}
     }
+    R.trace = (R.trace || []).concat(['want “' + (want.title || '') + '” by ' + (want.artist || '?') + (want.anime ? ' (' + want.anime + ')' : '') + '; entries ' + ranked.slice(0, 4).map(x => x.g.title + ' / ' + x.g.artist + ' ' + x.s.toFixed(1)).join('; ')]);
     if (asl) { const sig = Names.lyricSig(asl.kanji); ranked = ranked.filter(x => Names.overlap(x.g.sig, sig) >= 0.5).concat(ranked.filter(x => Names.overlap(x.g.sig, sig) < 0.5).map(x => ({ g: x.g, s: x.s - 20 }))); }
     let group = ranked.length ? ranked[0].g : null, chosen = null;
     const vidOf = (g, from) => (from || vids).find(v => { const t = this.songOf(v, want.anime); return t && this.close(g, t); }) || null;
@@ -16499,6 +16503,7 @@ const Maker = {
       theirs.splice(8);
       for (const x of theirs) x.twins = pool.filter(y => y !== x && this.close(y.g, x.g.title)).map(y => y.g).slice(0, 2);
       R.notes.push((list.by === 'artist' ? 'songs by ' : 'songs from ') + list.name + ': ' + theirs.length);
+      R.trace = (R.trace || []).concat(['list ' + list.by + ' ' + list.name + ': vids ' + list.vids.length + ', pool ' + pool.length + ', songs ' + theirs.map(x => x.g.title + ' (' + x.g.rows.length + ' rows, ' + x.s.toFixed(1) + (x.twins && x.twins.length ? ', twins ' + x.twins.length : '') + ')').join('; ')]);
       if (theirs.length) chosen = theirs.length > 1 && ui.choose ? await ask(theirs, list.ask) : theirs[0];
     }
     // two different songs fit about as well: ask
@@ -16528,6 +16533,7 @@ const Maker = {
       const cands = group ? [group].concat(near) : [];
       try { asl = await this.aslFind([Object.assign({}, want, { anime: want.anime || want.animeSeen || '' })], cands.length ? cands.map(g => g.sig) : null); } catch (e) { R.notes.push('animesonglyrics: ' + (e.message || e)); }
       if (asl && asl.matched > 0 && cands[asl.matched]) { group = cands[asl.matched]; R.notes.push('the lyrics page matched another set of entries: took those'); }
+      R.trace = (R.trace || []).concat(['asl checked against ' + cands.length + ' entry set(s): ' + (this._aslTrace || '')]);
       if (asl && !group && asl.artist) { try { const g2 = await this.lrcFind([{ title: asl.title, artist: asl.artist, romaji: [asl.title] }]); const sig = Names.lyricSig(asl.kanji); group = g2.find(g => Names.overlap(g.sig, sig) >= 0.5) || null; } catch (e) {} }
     }
     if (!group && !asl) throw new Error('No Japanese lyrics were found for “' + (want.title || req.text) + '”. Try the title in Japanese, add the artist, or paste the YouTube link.');
@@ -16667,7 +16673,7 @@ const Maker = {
     for (const q of list) {
       const t0 = Date.now();
       let offered = null;
-      try { const r = await this.run(q, { choose: async opts => { offered = opts.map(o => [o.title, o.artist, o.note].filter(Boolean).join(' / ')); return 0; } }, { dry: true }); out.push({ q, ok: true, ms: Date.now() - t0, song: r.song, video: r.video, timing: r.timing, lines: r.lines, timed: r.timed, english: r.english, offered, notes: r.notes }); }
+      try { const r = await this.run(q, { choose: async opts => { offered = opts.map(o => [o.title, o.artist, o.note].filter(Boolean).join(' / ')); return 0; } }, { dry: true }); out.push({ q, ok: true, ms: Date.now() - t0, song: r.song, video: r.video, timing: r.timing, lines: r.lines, timed: r.timed, english: r.english, offered, notes: r.notes, trace: r.trace }); }
       catch (e) { out.push({ q, ok: false, ms: Date.now() - t0, err: String(e.message || e) }); }
       if (pause) await sleep(pause);
     }
