@@ -1307,6 +1307,33 @@ li.fail .make-mark { background: var(--bad-soft); color: var(--bad); border-colo
 .kokoro-box { display: flex; flex-direction: column; gap: 8px; }
 .kokoro-prog { display: flex; flex-direction: column; gap: 4px; }
 
+/* saved songs (♡), kept for offline play */
+.btn.heart .ico { transition: transform .15s; }
+.btn.heart.on { color: var(--shu); }
+.btn.heart.on .ico { fill: currentColor; }
+.btn.heart:active .ico { transform: scale(1.25); }
+.media-side { display: flex; align-items: center; gap: 14px; flex: none; }
+.media-row .btn.heart { flex: none; }
+.chip.offline { background: var(--good-soft); color: var(--good); }
+.chip.online { background: var(--well); color: var(--ink-2); }
+.saved-shelf { padding: 18px 20px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; }
+.saved-list { display: flex; flex-direction: column; margin: 8px 0 0; padding: 0; list-style: none; }
+.saved-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; padding: 10px 0; border-top: 1px solid var(--rule); }
+.saved-main { flex: 1 1 260px; min-width: 0; cursor: pointer; }
+.saved-main h3 { font-size: 18px; font-weight: 600; }
+.saved-main p { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+.saved-more, .file-more, .make-own-more { flex-basis: 100%; }
+.store-links { padding: 10px 12px; margin-top: 6px; background: var(--paper, var(--bg)); border: 1px dashed var(--rule); border-radius: 10px; }
+.store-links ul { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0 0; padding: 0; list-style: none; }
+.store-links a { font-weight: 600; }
+label.linkish { color: var(--ai); text-decoration: underline; cursor: pointer; }
+.make-own { color: var(--ink-2); }
+
+/* word timing */
+.th-cur .tok.tapped { color: var(--shu); text-decoration: underline 2px; text-underline-offset: 4px; }
+.btn.th-tap { min-width: 9em; font-size: 17px; }
+.word-tool .btn-row { flex: none; }
+
 </style>
 </head>
 <body>
@@ -13200,7 +13227,7 @@ const Game = {
 /* ----- media library: one document per lesson, one per analysed stage ----- */
 const Lib = {
   list: [], _stageCache: new Map(),
-  DYN: ['opened', 'offset', 'final', 'through', 'watch', 'lastMode', 'imSec', 'playAll'], STAGE_DYN: ['st', 'best', 'stars', 'pre', 'tries', 'seen', 'eff', 'play'],
+  DYN: ['opened', 'offset', 'final', 'through', 'watch', 'lastMode', 'imSec', 'playAll', 'plan', 'fav', 'offsetSet', 'ytOffset', 'ytOffsetSet', 'timingOff', 'fileOff'], STAGE_DYN: ['st', 'best', 'stars', 'pre', 'tries', 'seen', 'eff', 'play'],
   async load() {
     const out = [];
     for (const id of Game.p.media) {
@@ -13225,6 +13252,14 @@ const Lib = {
     (pr.stages || []).forEach((s, i) => { if (m.stages[i] && s) Object.assign(m.stages[i], s); });
   },
   get(id) { return this.list.find(m => m.id === id) || null; },
+  /** Seconds the lines move for what is playing: a lesson's own file and its music video can each have their own. */
+  off(m) { return !m ? 0 : Player.isYouTube(m.id) && m.ytOffset != null ? m.ytOffset : (m.offset || 0); },
+  /** Set the offset of what is playing; sure: the learner synced it (so the game stops asking). */
+  setOff(m, v, sure) {
+    if (Player.isYouTube(m.id) && m.ytOffset != null) { m.ytOffset = v; if (sure) { m.ytOffsetSet = 1; m.timingOff = 0; } }
+    else { m.offset = v; if (sure) { m.offsetSet = 1; m.fileOff = 0; if (!Shelf.own(m)) m.timingOff = 0; } }
+    return this.save(m);
+  },
   sorted() { return this.list.slice().sort((a, b) => (b.opened || b.created || 0) - (a.opened || a.created || 0)); },
   /** Save progress on a lesson: a small document, written often. */
   save(m) { return Store.set('mp_' + m.id, this._progressDoc(m)); },
@@ -13317,6 +13352,7 @@ const MediaCache = {
     try {
       const db = await this._open();
       await new Promise((res, rej) => { const tx = db.transaction('files', 'readwrite'); tx.objectStore('files').put({ blob: file, name: file.name, type: file.type }, id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); });
+      if (typeof Shelf !== 'undefined') Shelf.kept.add(id);
       return true;
     } catch (e) { return false; }
   },
@@ -13329,6 +13365,15 @@ const MediaCache = {
   },
   async del(id) {
     try { const db = await this._open(); db.transaction('files', 'readwrite').objectStore('files').delete(id); } catch (e) {}
+    if (typeof Shelf !== 'undefined') Shelf.kept.delete(id);
+  },
+  /** The lessons with a copy kept here. */
+  async keys() {
+    if (Store.sandbox) return [];
+    try {
+      const db = await this._open();
+      return await new Promise((res, rej) => { const rq = db.transaction('files').objectStore('files').getAllKeys(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error); });
+    } catch (e) { return []; }
   }
 };
 
@@ -13359,6 +13404,12 @@ const Idb = {
       rq.onerror = () => rej(rq.error);
     });
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
+    // leaving or hiding the page: write what is waiting now, not in 250 ms (a reload right after a change kept the old copy)
+    if (typeof window !== 'undefined') {
+      const soon = () => { if (this._timer) { clearTimeout(this._timer); this._timer = 0; } if (this._dirty.size) this.flush(); };
+      window.addEventListener('pagehide', soon);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') soon(); });
+    }
   },
   get(key) { const v = this.cache.get(key); return v === undefined ? null : deepClone(v); },
   set(key, val) { this.cache.set(key, deepClone(val)); this._dirty.set(key, true); this._kick(); return this._whenFlushed(); },
@@ -16341,6 +16392,61 @@ const Maker = {
     return { row: r, diff: null, fit: 'unknown' };
   },
 
+  /** The learner's own file of the song came: fit the lines' timing to it. The album track, the TV size and the music
+      video differ in length; LRCLIB usually has the lyrics timed for each, so the entry of this file's length is mapped
+      onto the lesson's lines by their words. Returns { fit: 'sure' | 'near' | 'off', moved } or null. */
+  async retime(m, dur) {
+    if (!m || !m.timed || !(dur > 0)) return null;
+    if (m.lrcDur && Math.abs(m.lrcDur - dur) <= this.SURE) return { fit: 'sure', moved: 0 };
+    if (!m.lrcDur) return { fit: 'off', moved: 0 };                     // timed by hand: nothing to fit it from
+    const groups = await this.lrcFind([{ title: m.title, artist: m.artist }], 4);
+    const sig = Names.lyricSig(m.lines.map(l => l.jp));
+    const g = groups.map(x => ({ x, o: Names.overlap(x.sig, sig) })).filter(y => y.o >= 0.6).sort((a, b) => b.o - a.o)[0];
+    if (!g) return { fit: 'off', moved: 0 };
+    const t = this.pickTiming(g.x, dur);
+    if (!t || !t.row.synced || t.fit === 'off') return { fit: 'off', moved: 0 };
+    const parsed = JP.parseTranscript(t.row.text, 'lyrics.lrc', { lyrics: true });
+    const moved = this.mapTimes(m.lines, parsed.lines.filter(l => l.a != null && JP.hasJapanese(l.jp)));
+    if (moved < 0) return { fit: 'off', moved: 0 };
+    m.lrcDur = t.row.duration || dur;
+    if (moved && m.ytOffset != null) m.ytOffsetSet = 0;                // the video's offset was for the old times
+    return { fit: t.fit, moved };
+  },
+  /** Give the lesson's lines the times of rows with the same words (in order). Lines without a twin move with the one
+      before them. Returns how many lines changed, or -1 when too few lines matched to trust it. */
+  mapTimes(lines, rows) {
+    const norm = x => JP.toHira(String(x || '').normalize('NFKC')).replace(/[\s\p{P}\p{S}]/gu, '');
+    const A = lines.map(l => (l.a != null && JP.hasJapanese(l.jp) ? norm(l.jp) : '')), R = rows.map(r => norm(r.jp));
+    const n = A.length, k = R.length, W = k + 1;
+    const dp = new Float32Array((n + 1) * W), bt = new Uint8Array((n + 1) * W);
+    for (let i = 1; i <= n; i++) for (let j = 1; j <= k; j++) {
+      let best = dp[(i - 1) * W + j], how = 1;
+      if (dp[i * W + j - 1] > best) { best = dp[i * W + j - 1]; how = 2; }
+      if (A[i - 1] && R[j - 1]) { const sm = A[i - 1] === R[j - 1] ? 1 : JP.similarity(A[i - 1], R[j - 1]); if (sm >= 0.6 && dp[(i - 1) * W + j - 1] + sm > best) { best = dp[(i - 1) * W + j - 1] + sm; how = 3; } }
+      dp[i * W + j] = best; bt[i * W + j] = how;
+    }
+    const pair = new Array(n).fill(-1);
+    for (let i = n, j = k; i > 0 && j > 0;) { const hw = bt[i * W + j]; if (hw === 3) { pair[i - 1] = j - 1; i--; j--; } else if (hw === 1) i--; else j--; }
+    const sung = A.filter(Boolean).length, got = pair.filter(x => x >= 0).length;
+    if (!sung || got < sung * 0.6) return -1;
+    let delta = null, changed = 0;
+    const firstJ = pair.findIndex(x => x >= 0);
+    for (let i = 0; i < n; i++) {
+      const L = lines[i]; if (L.a == null) continue;
+      let na, nb;
+      if (pair[i] >= 0) { const r = rows[pair[i]]; na = r.a; nb = r.b != null ? r.b : (rows[pair[i] + 1] ? rows[pair[i] + 1].a : r.a + (L.b - L.a)); delta = na - L.a; }
+      else { const d = delta != null ? delta : (firstJ >= 0 ? rows[pair[firstJ]].a - lines[firstJ].a : 0); na = L.a + d; nb = L.b != null ? L.b + d : null; }
+      const d = na - L.a;
+      if (Math.abs(d) > 0.05 || (nb != null && L.b != null && Math.abs(nb - L.b) > 0.05)) {
+        changed++;
+        if (L.wsrc === 'tap' && L.wt) { L.wt = L.wt.map(([c, t]) => [c, Math.round((t + d) * 1000) / 1000]); if (L.we != null) L.we += d; }
+        else if (L.wt) WordTime.clear(L);
+      }
+      L.a = Math.round(na * 1000) / 1000; if (nb != null) L.b = Math.round(nb * 1000) / 1000;
+    }
+    return changed;
+  },
+
   /* animesonglyrics: the same song, confirmed by its lyrics. */
   async aslFind(names, lrcSig) {
     // what to search for, most promising first. The site matches the words as written (romaji titles), in order.
@@ -16616,7 +16722,11 @@ const Maker = {
         }
       }
     }
-    const timing = group ? this.pickTiming(group, video && video.duration ? Math.max(0, video.duration - (video.start || 0)) : 0) : null;
+    // the learner's own file plays first (offline), so the timing fits it when there is one
+    const ownE = this.ownFile({ title: songTitle });
+    let ownDur = 0;
+    if (ownE) { try { ownDur = await mediaDuration(await Folder.fileOf(ownE)); } catch (e) {} }
+    const timing = group ? this.pickTiming(group, ownDur || (video && video.duration ? Math.max(0, video.duration - (video.start || 0)) : 0)) : null;
     R.video = video ? { id: video.id, title: video.title, channel: video.channel, duration: video.duration } : null;
     R.timing = timing ? { fit: timing.fit, diff: timing.diff, duration: timing.row.duration, synced: timing.row.synced } : null;
     if (video) step('video', timing && timing.fit === 'off' ? 'warn' : 'done', '“' + (video.title || songTitle) + '”' + (video.channel ? ' · ' + video.channel : '') + (video.duration ? ' · ' + fmtClock(video.duration) : '') +
@@ -16658,10 +16768,12 @@ const Maker = {
     m.anime = R.song.anime; m.theme = R.song.theme;
     if (timing && timed) { m.lrcDur = timing.row.duration || 0; if (timing.fit === 'off') m.timingOff = 1; }
     m.made = { at: now(), from: req.kind, input: String(input).slice(0, 200) };
-    const own = this.ownFile(m);
-    if (own) { m.fileName = own.name; m.filePath = own.path; m.isVideo = /\.(mp4|webm|mkv|mov|m4v)$/i.test(own.name) || m.isVideo; R.ownFile = own.path; }
+    const own = ownE;
+    if (own) { m.fileName = own.name; m.filePath = own.path; m.isVideo = /\.(mp4|webm|mkv|mov|m4v)$/i.test(own.name) || m.isVideo; R.ownFile = own.path; if (ownDur) m.fileDur = ownDur; if (m.yt) { m.ytOffset = 0; m.ytOffsetSet = 0; } }
     await Lib.create(m);
     if (m.yt && !own) Player.attachYT(m.id, m.yt, m.title, m.ytStart);
+    if (!own) setTimeout(() => Shelf.lookAround(), 300);              // a file of it under another name (its tags tell)
+    else if (Game.p.settings.autoWords !== false) WordTime.queue(m);
     Game.p.lastMedia = m.id; Game.touch();
     step('build', 'done', plural(m.stages.length, 'stage') + (own ? ' · your file “' + own.name + '” is attached, so it plays offline' : m.yt ? ' · the video streams from YouTube' : ''));
 
@@ -16824,6 +16936,526 @@ const Plan = {
         h('b', 'Day ' + (k + 1)), ' ',
         d.final ? 'Final test, then talk about the song with Kotohana (about 10 min)' + (m.final && m.final.best != null ? ' ✓' : '') : 'Stage' + (d.stages.length > 1 ? 's ' : ' ') + d.stages.map(n => n + 1).join(', ') + ': learn the lines, play, take the stage test (about ' + d.min + ' min)' + (d.stages.every(done) ? ' ✓' : ''))))),
       o.actions || null);
+  }
+};
+
+/* ===== 54-shelf.js ===== */
+/* ---------- 54-shelf: saved songs, kept for offline play ----------
+   A saved song (♡) is a lesson the learner keeps coming back to. Its audio can be the music video (online only) or a
+   file of its own: bought from a store that sells DRM-free files, or one the learner already has. Files are matched to
+   lessons by their tags (title, artist, length) and name, copied into the media folder when the game has one (kept in
+   this browser otherwise), and the lyrics' timing is fitted to the file. New files in the media folder, and album
+   ZIPs, are picked up when the learner comes back to the game. */
+'use strict';
+
+/** Title, artist, album and length from a music file's own tags: ID3 (MP3), MP4 (M4A, AAC, ALAC), FLAC, Ogg. */
+const Tags = {
+  async read(file) {
+    try {
+      const head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+      const s = (o, n) => String.fromCharCode.apply(null, head.subarray(o, o + n));
+      if (s(0, 3) === 'ID3') {
+        const size = ((head[6] & 0x7f) << 21 | (head[7] & 0x7f) << 14 | (head[8] & 0x7f) << 7 | (head[9] & 0x7f)) + 10;
+        return this.id3(new Uint8Array(await file.slice(0, Math.min(size, 8 << 20)).arrayBuffer()));
+      }
+      if (s(0, 4) === 'fLaC') return await this.flac(file);
+      if (s(0, 4) === 'OggS') return this.ogg(new Uint8Array(await file.slice(0, 256 << 10).arrayBuffer()));
+      if (s(4, 4) === 'ftyp') return await this.mp4(file);
+      if (file.size > 128) return this.id3v1(new Uint8Array(await file.slice(file.size - 128).arrayBuffer()));
+    } catch (e) { console.warn('tags', e); }
+    return {};
+  },
+  /** Old Japanese tags are often Shift_JIS in fields marked Latin-1. */
+  latin(b) {
+    if (b.some(x => x >= 0x80)) { try { const t = new TextDecoder('shift_jis', { fatal: true }).decode(b); if (/[ぁ-ゟ゠-ヿ一-鿿]/.test(t)) return t; } catch (e) {} }
+    let t = ''; for (const x of b) t += String.fromCharCode(x); return t;
+  },
+  clip(t) { return String(t || '').split('\u0000')[0].trim(); },
+  id3text(body) {
+    const enc = body[0], d = body.subarray(1);
+    if (enc === 3) return this.clip(new TextDecoder('utf-8').decode(d));
+    if (enc === 1 || enc === 2) {
+      const be = enc === 2 || (d[0] === 0xfe && d[1] === 0xff), bom = (d[0] === 0xff && d[1] === 0xfe) || (d[0] === 0xfe && d[1] === 0xff);
+      return this.clip(new TextDecoder(be ? 'utf-16be' : 'utf-16le').decode(d.subarray(bom ? 2 : 0, d.length - (d.length - (bom ? 2 : 0)) % 2)));
+    }
+    let n = d.indexOf(0); if (n < 0) n = d.length;
+    return this.clip(this.latin(d.subarray(0, n)));
+  },
+  id3(b) {
+    const ver = b[3], flags = b[5], out = {};
+    const ss = o => (b[o] & 0x7f) << 21 | (b[o + 1] & 0x7f) << 14 | (b[o + 2] & 0x7f) << 7 | (b[o + 3] & 0x7f);
+    const u32 = o => ((b[o] << 24) >>> 0) + (b[o + 1] << 16 | b[o + 2] << 8 | b[o + 3]);
+    const end = Math.min(b.length, ss(6) + 10);
+    let p = 10;
+    if (flags & 0x40) p += ver === 4 ? ss(10) : u32(10) + 4;
+    const KEY = { TIT2: 'title', TT2: 'title', TPE1: 'artist', TP1: 'artist', TPE2: 'albumArtist', TP2: 'albumArtist', TALB: 'album', TAL: 'album', TLEN: 'len', TLE: 'len' };
+    while (p + (ver === 2 ? 6 : 10) <= end) {
+      const id = String.fromCharCode.apply(null, b.subarray(p, p + (ver === 2 ? 3 : 4)));
+      if (!/^[A-Z0-9]{3,4}$/.test(id)) break;
+      const fs = ver === 2 ? (b[p + 3] << 16 | b[p + 4] << 8 | b[p + 5]) : ver === 4 ? ss(p + 4) : u32(p + 4), hl = ver === 2 ? 6 : 10;
+      if (fs <= 0) break;
+      const k = KEY[id];
+      if (k && !out[k]) { const t = this.id3text(b.subarray(p + hl, Math.min(end, p + hl + fs))); if (t) out[k] = t; }
+      p += hl + fs;
+    }
+    if (out.len) { const ms = parseInt(out.len, 10); if (ms > 1000) out.duration = ms / 1000; delete out.len; }
+    return out;
+  },
+  id3v1(b) {
+    if (String.fromCharCode(b[0], b[1], b[2]) !== 'TAG') return {};
+    const f = (o, n) => { let e = o; while (e < o + n && b[e]) e++; return this.latin(b.subarray(o, e)).trim(); };
+    const out = {}, t = f(3, 30), a = f(33, 30), al = f(63, 30);
+    if (t) out.title = t; if (a) out.artist = a; if (al) out.album = al;
+    return out;
+  },
+  /** Vorbis comments (FLAC, Ogg): little-endian lengths, then KEY=value. */
+  vorbis(b, p) {
+    const u32 = o => (b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) >>> 0, dec = new TextDecoder('utf-8'), out = {};
+    if (p + 8 > b.length) return out;
+    p += 4 + u32(p);
+    const n = u32(p); p += 4;
+    const KEY = { TITLE: 'title', ARTIST: 'artist', ALBUMARTIST: 'albumArtist', 'ALBUM ARTIST': 'albumArtist', ALBUM: 'album' };
+    for (let i = 0; i < n && p + 4 <= b.length; i++) {
+      const len = u32(p); p += 4;
+      if (p + len > b.length) break;
+      const s = dec.decode(b.subarray(p, p + len)); p += len;
+      const eq = s.indexOf('='); if (eq < 1) continue;
+      const k = KEY[s.slice(0, eq).toUpperCase()], v = s.slice(eq + 1).trim();
+      if (k && v && !out[k]) out[k] = v;
+    }
+    return out;
+  },
+  async flac(file) {
+    const out = {};
+    let p = 4;
+    for (let guard = 0; guard < 64 && p + 4 <= file.size; guard++) {
+      const hd = new Uint8Array(await file.slice(p, p + 4).arrayBuffer());
+      const last = hd[0] & 0x80, type = hd[0] & 0x7f, len = hd[1] << 16 | hd[2] << 8 | hd[3];
+      if (type === 0 || type === 4) {
+        const b = new Uint8Array(await file.slice(p + 4, p + 4 + Math.min(len, 1 << 20)).arrayBuffer());
+        if (type === 0 && b.length >= 18) {
+          const sr = (b[10] << 12) | (b[11] << 4) | (b[12] >> 4);
+          const total = (b[13] & 0x0f) * 4294967296 + ((b[14] << 24) >>> 0) + (b[15] << 16 | b[16] << 8 | b[17]);
+          if (sr && total) out.duration = total / sr;
+        } else if (type === 4) Object.assign(out, this.vorbis(b, 0), out);
+      }
+      if (last || type === 127) break;
+      p += 4 + len;
+    }
+    return out;
+  },
+  ogg(b) {
+    const find = (sig) => { outer: for (let i = 0; i + sig.length <= b.length; i++) { for (let j = 0; j < sig.length; j++) if (b[i + j] !== sig.charCodeAt(j)) continue outer; return i; } return -1; };
+    let i = find('OpusTags'); if (i >= 0) return this.vorbis(b, i + 8);
+    i = find('\u0003vorbis'); if (i >= 0) return this.vorbis(b, i + 7);
+    return {};
+  },
+  /** MP4: the moov box (anywhere in the file) holds the length (mvhd) and the iTunes-style tags (udta/meta/ilst). */
+  async mp4(file) {
+    let p = 0;
+    for (let guard = 0; guard < 4096 && p + 8 <= file.size; guard++) {
+      const dv = new DataView(await file.slice(p, p + 16).arrayBuffer());
+      let len = dv.getUint32(0), hl = 8;
+      const type = String.fromCharCode(dv.getUint8(4), dv.getUint8(5), dv.getUint8(6), dv.getUint8(7));
+      if (len === 1 && dv.byteLength >= 16) { len = dv.getUint32(8) * 4294967296 + dv.getUint32(12); hl = 16; } else if (len === 0) len = file.size - p;
+      if (len < 8) break;
+      if (type === 'moov') return len > (48 << 20) ? {} : this.moov(new Uint8Array(await file.slice(p + hl, p + len).arrayBuffer()));
+      p += len;
+    }
+    return {};
+  },
+  moov(b) {
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), out = {}, dec = new TextDecoder('utf-8');
+    const KEY = { '©nam': 'title', '©ART': 'artist', aART: 'albumArtist', '©alb': 'album' };
+    const walk = (s, e, parent, depth) => {
+      let p = s;
+      while (p + 8 <= e && depth < 8) {
+        let len = dv.getUint32(p), hl = 8;
+        const type = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]);
+        if (len === 1) { len = dv.getUint32(p + 8) * 4294967296 + dv.getUint32(p + 12); hl = 16; } else if (len === 0) len = e - p;
+        if (len < 8 || p + len > e) break;
+        const cs = p + hl, ce = p + len;
+        if (type === 'mvhd') {
+          const v1 = b[cs] === 1, ts = dv.getUint32(cs + (v1 ? 20 : 12)), du = v1 ? dv.getUint32(cs + 24) * 4294967296 + dv.getUint32(cs + 28) : dv.getUint32(cs + 16);
+          if (ts && du) out.duration = du / ts;
+        } else if (type === 'udta' || type === 'ilst') walk(cs, ce, type, depth + 1);
+        else if (type === 'meta') walk(cs + (dv.getUint32(cs) === 0 ? 4 : 0), ce, type, depth + 1);
+        else if (parent === 'ilst' && KEY[type]) {
+          // the item holds a data box: size, 'data', type (4), locale (4), the text
+          if (ce - cs >= 16 && String.fromCharCode(b[cs + 4], b[cs + 5], b[cs + 6], b[cs + 7]) === 'data') {
+            const dl = Math.min(dv.getUint32(cs), ce - cs), t = dec.decode(b.subarray(cs + 16, cs + dl)).trim();
+            if (t && !out[KEY[type]]) out[KEY[type]] = t;
+          }
+        }
+        p = ce;
+      }
+    };
+    walk(0, b.length, 'moov', 0);
+    return out;
+  }
+};
+
+/** Album downloads come as ZIP files (OTOTOY, Bandcamp): read the list and take files out, in the browser. */
+const Zip = {
+  async list(file) {
+    const tail = Math.min(file.size, 65557), b = new Uint8Array(await file.slice(file.size - tail).arrayBuffer()), dv = new DataView(b.buffer);
+    let e = -1;
+    for (let i = b.length - 22; i >= 0; i--) if (b[i] === 0x50 && b[i + 1] === 0x4b && b[i + 2] === 5 && b[i + 3] === 6) { e = i; break; }
+    if (e < 0) throw new Error('This is not a ZIP file, or it is damaged.');
+    let n = dv.getUint16(e + 10, true), cdSize = dv.getUint32(e + 12, true), cdOff = dv.getUint32(e + 16, true);
+    if ((cdOff === 0xffffffff || n === 0xffff) && e >= 20 && dv.getUint32(e - 20, true) === 0x07064b50) {
+      const at = Number(dv.getBigUint64(e - 12, true)), z = new DataView(await file.slice(at, at + 56).arrayBuffer());
+      n = Number(z.getBigUint64(32, true)); cdSize = Number(z.getBigUint64(40, true)); cdOff = Number(z.getBigUint64(48, true));
+    }
+    const cd = new Uint8Array(await file.slice(cdOff, cdOff + cdSize).arrayBuffer()), c = new DataView(cd.buffer), out = [];
+    let p = 0;
+    for (let i = 0; i < n && p + 46 <= cd.length; i++) {
+      if (c.getUint32(p, true) !== 0x02014b50) break;
+      const flags = c.getUint16(p + 8, true), method = c.getUint16(p + 10, true);
+      let csize = c.getUint32(p + 20, true), usize = c.getUint32(p + 24, true), off = c.getUint32(p + 42, true);
+      const nl = c.getUint16(p + 28, true), xl = c.getUint16(p + 30, true), cl = c.getUint16(p + 32, true);
+      const nb = cd.subarray(p + 46, p + 46 + nl);
+      let name;
+      if (flags & 0x800) name = new TextDecoder('utf-8').decode(nb);
+      else { try { name = new TextDecoder('utf-8', { fatal: true }).decode(nb); } catch (err) { name = Tags.latin(nb); } }
+      // ZIP64 sizes and offset, in that order, for the fields that are full
+      for (let x = p + 46 + nl, xe = x + xl; x + 4 <= xe;) {
+        const id = c.getUint16(x, true), sz = c.getUint16(x + 2, true);
+        if (id === 1) { let q = x + 4; if (usize === 0xffffffff) { usize = Number(c.getBigUint64(q, true)); q += 8; } if (csize === 0xffffffff) { csize = Number(c.getBigUint64(q, true)); q += 8; } if (off === 0xffffffff) off = Number(c.getBigUint64(q, true)); }
+        x += 4 + sz;
+      }
+      if (!/\/$/.test(name)) out.push({ name, method, csize, usize, off, enc: !!(flags & 1) });
+      p += 46 + nl + xl + cl;
+    }
+    return out;
+  },
+  async blob(file, ent) {
+    if (ent.enc) throw new Error('“' + ent.name + '” in the ZIP has a password.');
+    const h = new DataView(await file.slice(ent.off, ent.off + 30).arrayBuffer());
+    if (h.getUint32(0, true) !== 0x04034b50) throw new Error('The ZIP file is damaged.');
+    const start = ent.off + 30 + h.getUint16(26, true) + h.getUint16(28, true), raw = file.slice(start, start + ent.csize);
+    if (ent.method === 0) return raw;
+    if (ent.method === 8 && typeof DecompressionStream !== 'undefined') return await new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+    throw new Error('This browser cannot unpack that ZIP; unzip it and choose the files.');
+  }
+};
+
+const Shelf = {
+  kept: new Set(), _meta: new Map(), _seen: new Map(), _busy: false, _zips: new Set(),
+  /** Stores that sell songs as files you keep (no copy protection): a search for this song in each. */
+  STORES: [
+    { id: 'mora', name: 'mora', note: 'FLAC and AAC · Japan’s largest download store', url: q => 'https://mora.jp/search/top?keyWord=' + encodeURIComponent(q) },
+    { id: 'ototoy', name: 'OTOTOY', note: 'FLAC, ALAC and AAC', url: q => 'https://ototoy.jp/find/?q=' + encodeURIComponent(q) },
+    { id: 'bandcamp', name: 'Bandcamp', note: 'independent artists', url: q => 'https://bandcamp.com/search?q=' + encodeURIComponent(q) + '&item_type=t' },
+    { id: 'qobuz', name: 'Qobuz', note: 'FLAC', url: q => 'https://www.qobuz.com/search?q=' + encodeURIComponent(q) + '&i=boutique' },
+    { id: 'apple', name: 'iTunes Store', note: 'AAC · buy in the Music or iTunes app', url: q => 'https://music.apple.com/search?term=' + encodeURIComponent(q) },
+    { id: 'amazon', name: 'Amazon (Japan)', note: 'MP3', url: q => 'https://www.amazon.co.jp/s?k=' + encodeURIComponent(q) + '&i=digital-music' }
+  ],
+  links(m) { const q = [m.title, m.artist].filter(Boolean).join(' '); return this.STORES.map(s => ({ name: s.name, note: s.note, url: s.url(q) })); },
+
+  async init() {
+    if (typeof window !== 'undefined' && BUILD.local) {
+      const look = () => { if (document.visibilityState !== 'hidden') this.rescan(); };
+      window.addEventListener('focus', look);
+      document.addEventListener('visibilitychange', look);
+      Bus.on('folder', () => this.lookAround());
+    }
+    try { for (const k of await MediaCache.keys()) this.kept.add(k); } catch (e) {}
+  },
+  saved() { return Lib.list.filter(m => m.fav && !m.sample).sort((a, b) => (b.fav || 0) - (a.fav || 0)); },
+  async toggle(m, on) {
+    m.fav = (on == null ? !m.fav : on) ? now() : 0;
+    await Lib.save(m); Game.touch();
+    Bus.emit('shelf', m.id);
+    if (m.fav && !this.own(m) && this.needs(m)) this.lookAround();
+    return !!m.fav;
+  },
+  /** Where this lesson's own file is on this device: 'folder', 'kept' (a copy in this browser), 'here' (picked this visit), or ''. */
+  own(m) {
+    if (!m) return '';
+    if (m.fileName && Folder.connected() && Folder.find(m)) return 'folder';
+    if (this.kept.has(m.id)) return 'kept';
+    const f = Player.info(m.id);
+    if (f && !f.yt && !Player.broken.has(m.id)) return 'here';
+    return '';
+  },
+  /** A lesson that could take a file: none of its own here, and none waiting in a folder the browser has not reopened. */
+  needs(m) { return !!m && !m.sample && !this.own(m) && !(m.fileName && Folder.handle && !Folder.connected()); },
+  status(m) {
+    const o = this.own(m);
+    if (o === 'folder') return { ok: true, label: 'Offline · in your folder' };
+    if (o === 'kept') return { ok: true, label: 'Offline · kept in this browser' };
+    if (o === 'here') return { ok: true, label: 'Your file (this visit)' };
+    if (m.fileName && Folder.handle && !Folder.connected()) return { ok: false, label: 'In your folder (allow access again)' };
+    if (m.yt) return { ok: false, label: 'Video · online only' };
+    return { ok: false, label: 'No audio yet' };
+  },
+
+  /* ----- what a file is ----- */
+  stemOf(name) {
+    return String(name || '').replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')
+      .replace(/^\s*(?:disc\s*\d+\s*[-_.]?\s*)?\d{1,3}(?:[-_.]\d{1,3})?(?:\s*[-_.)]\s*|\s+)(?=\S)/i, '')    // "01 ", "1-01 ", "01. ", "01 - "
+      .replace(/_/g, ' ').trim();
+  },
+  async meta(file, name) {
+    const key = name + '|' + (file.size || 0) + '|' + (file.lastModified || 0);
+    if (this._meta.has(key)) return this._meta.get(key);
+    const tags = await Tags.read(file);
+    const stem = this.stemOf(name), sp = Names.split(stem, ''), sides = stem.split(/\s+[-–—]\s+|\s*[／/]\s*/).map(s => s.trim()).filter(Boolean);
+    const out = {
+      names: uniq([tags.title, sp.title, stem].concat(sides, sp.romaji || []).filter(Boolean).map(s => Names.clean(s))),
+      artists: uniq([tags.artist, tags.albumArtist, sp.artist].concat(sides).filter(Boolean).map(s => Names.clean(s))),
+      title: tags.title || sp.title || stem, artist: tags.artist || sp.artist || '', album: tags.album || '', duration: tags.duration || 0, tagged: !!tags.title, file
+    };
+    this._meta.set(key, out);
+    return out;
+  },
+  /** The length, when the tags did not give it (asked of the browser only for files that might be the song). */
+  async lengthOf(meta) { if (!meta.duration && !meta.noLen && meta.file) { meta.duration = await mediaDuration(meta.file); if (!meta.duration) meta.noLen = 1; } return meta.duration; },
+  /** A cheap first look, before any tags are read: the file's name holds one of the lesson's names, or says nothing ("track01"). */
+  flat(s) { return String(s || '').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, ''); },
+  keysOf(m) {
+    if (m._keys && m._keys.t === m.title) return m._keys.k;
+    const k = uniq([m.title, m.titleEn].concat(m.aliases || []).filter(Boolean).flatMap(t => [this.flat(t), Names.key(t)])).filter(x => x && x.length >= 2);
+    Object.defineProperty(m, '_keys', { value: { t: m.title, k }, enumerable: false, configurable: true, writable: true });
+    return k;
+  },
+  maybe(name, lessons) {
+    const stem = this.stemOf(name), f = this.flat(stem);
+    if (!f.replace(/\d+|track|audio|song|untitled|newrecording|rec/g, '')) return true;
+    const ks = uniq([f, Names.key(stem)]).filter(Boolean);
+    return lessons.some(m => this.keysOf(m).some(k => ks.some(x => x.indexOf(k) !== -1 || (x.length >= 3 && k.indexOf(x) !== -1))));
+  },
+  /** How sure it is that a file is this lesson's song: the title, then the artist and the length agree. Over 0.95: the same. */
+  score(m, meta) {
+    const titles = uniq([m.title, m.titleEn].concat(m.aliases || []).filter(Boolean));
+    let t = 0;
+    for (const a of meta.names) for (const b of titles) { const s = Names.simName(a, b); if (s > t) t = s; }
+    if (t < 0.8) return 0;
+    let s = t;
+    const art = m.artist ? Math.max(0, ...meta.artists.map(a => Names.sameName(a, m.artist) ? 1 : Names.simName(a, m.artist))) : 0;
+    if (art >= 0.85) s += 0.3;
+    else if (m.artist && meta.tagged && meta.artist && art < 0.5) s -= 0.3;          // tagged with another artist: another song of that name
+    const lens = [m.lrcDur, m.ytDur].filter(x => x > 0);
+    if (meta.duration && lens.length) {
+      const d = Math.min(...lens.map(x => Math.abs(x - meta.duration)));
+      if (d <= 4) s += 0.25;
+      else if (art < 0.85 && d > 8) s -= 0.2;                                       // only the name, and another length: not sure enough
+      else if (d > 45) s -= 0.1;
+    }
+    if (Names.key(m.title).length < 4 && art < 0.85 && s < 1.2) s -= 0.4;           // a short title alone ("Lemon") is not enough
+    return s;
+  },
+  /** Pair files with lessons, surest first, each used once. items: [{ file, name }] */
+  async match(items, lessons) {
+    const pairs = [];
+    for (const it of items) {
+      const meta = await this.meta(it.file, it.name);
+      it.meta = meta;
+      // the length counts only where the names leave it open
+      if (!meta.duration && lessons.some(m => (m.lrcDur || m.ytDur) && this.score(m, meta) >= 0.7)) await this.lengthOf(meta);
+      for (const m of lessons) { const s = this.score(m, meta); if (s >= 0.95) pairs.push({ it, m, s: s + (m.fav ? 0.05 : 0) }); }
+    }
+    pairs.sort((a, b) => b.s - a.s);
+    const usedI = new Set(), usedM = new Set(), out = [];
+    for (const p of pairs) { if (usedI.has(p.it) || usedM.has(p.m)) continue; usedI.add(p.it); usedM.add(p.m); out.push(p); }
+    return out;
+  },
+
+  /* ----- giving a lesson its file ----- */
+  safeName(s) { return String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120); },
+  /** Copy a file into the media folder (when the game may write there). Returns the folder entry, or null. */
+  async toFolder(file, name, sub) {
+    if (!Folder.handle || Folder.perm !== 'granted') return null;
+    try {
+      const dir = sub ? await Folder.handle.getDirectoryHandle(this.safeName(sub), { create: true }) : Folder.handle;
+      let fname = this.safeName(name);
+      const ext = (fname.match(/\.[^.]+$/) || [''])[0], base = fname.slice(0, fname.length - ext.length);
+      for (let i = 2; i < 50; i++) {
+        let have = null; try { have = await (await dir.getFileHandle(fname)).getFile(); } catch (e) {}
+        if (!have || have.size === file.size) break;
+        fname = base + ' (' + i + ')' + ext;
+      }
+      const fh = await dir.getFileHandle(fname, { create: true }), cur = await fh.getFile();
+      if (cur.size !== file.size) { const w = await fh.createWritable(); await w.write(file); await w.close(); }
+      const path = (sub ? this.safeName(sub) + '/' : '') + fname, e = { path, name: fname, handle: fh, kind: 'media' };
+      Folder.entries.set(path, e);
+      return e;
+    } catch (err) { console.warn('copy to folder failed', err); return null; }
+  },
+  /** Give a lesson its own file. from: a folder entry (already in the folder) or a File picked or unpacked.
+      The file is copied into the media folder, or kept in this browser; the timing is fitted to it. */
+  async attach(m, file, o) {
+    o = o || {};
+    let e = o.entry || null;
+    if (!e && !o.noCopy) e = await this.toFolder(file, o.saveAs || file.name || (this.safeName([m.artist, m.title].filter(Boolean).join(' - ')) + '.m4a'));
+    const wasYT = !!m.yt && !this.own(m);
+    Player.attach(m.id, file);
+    m.fileName = e ? e.name : (file.name || 'song');
+    m.filePath = e ? e.path : '';
+    m.fileSize = file.size || 0;
+    m.isVideo = Player.isVideo(m.id);
+    if (!e || Folder.perm === 'session') { if (await MediaCache.put(m.id, file)) this.kept.add(m.id); }
+    else if (this.kept.has(m.id)) { MediaCache.del(m.id); this.kept.delete(m.id); }
+    // the offset set for the music video stays with the video
+    if (wasYT && m.ytOffset == null) { m.ytOffset = m.offset || 0; m.ytOffsetSet = m.offsetSet || 0; }
+    m.offset = 0; m.offsetSet = 0; m.fileOff = 0;
+    let fit = null;
+    if (m.timed) {
+      const dur = (o.meta && o.meta.duration) || await mediaDuration(file);
+      try { fit = await Maker.retime(m, dur); } catch (err) { console.warn('retime', err); }
+      m.fileDur = dur || 0;
+      if (!fit || fit.fit === 'off') { const lens = [m.lrcDur, m.ytDur].filter(x => x > 0); if (dur && lens.length && Math.min(...lens.map(x => Math.abs(x - dur))) > 6) m.fileOff = 1; }
+    }
+    await Lib.saveContent(m);
+    Bus.emit('shelf', m.id);
+    if (Game.p.settings.autoWords !== false) WordTime.queue(m);
+    return { entry: e, fit, kept: this.kept.has(m.id) };
+  },
+
+  /** Files the learner chose (songs, videos, album ZIPs): match each to a lesson, attach, and keep the rest in the folder. */
+  async take(list) {
+    const items = [], zips = [], other = [];
+    for (const f of Array.from(list || [])) {
+      if (/\.zip$/i.test(f.name)) zips.push(f);
+      else if (Folder.MEDIA.test(f.name)) items.push({ file: f, name: f.name });
+      else other.push(f);
+    }
+    for (const z of zips) {
+      try {
+        for (const ent of await Zip.list(z)) {
+          if (!Folder.MEDIA.test(ent.name) || /(^|\/)__MACOSX\//.test(ent.name)) continue;
+          const blob = await Zip.blob(z, ent), name = ent.name.replace(/^.*\//, '');
+          items.push({ file: new File([blob], name, { type: blob.type || '' }), name, album: z.name.replace(/\.zip$/i, '') });
+        }
+      } catch (err) { toast(String(err.message || err), 'bad'); }
+    }
+    if (!items.length) return { attached: [], rest: [], other };
+    const lessons = Lib.list.filter(m => this.needs(m));
+    const pairs = await this.match(items, lessons);
+    const attached = [];
+    for (const p of pairs) {
+      const r = await this.attach(p.m, p.it.file, { meta: p.it.meta, saveAs: p.it.album ? this.safeName([p.m.artist, p.m.title].filter(Boolean).join(' - ')) + (p.it.name.match(/\.[^.]+$/) || [''])[0] : null });
+      attached.push({ m: p.m, fit: r.fit, where: r.entry ? 'folder' : r.kept ? 'kept' : 'here' });
+    }
+    // the others: into the media folder (an album's tracks in a folder of its own), ready to become lessons
+    const rest = items.filter(it => !pairs.some(p => p.it === it));
+    const phone = [];
+    for (const it of rest) { const e = await this.toFolder(it.file, it.name, it.album || ''); if (!e) phone.push(it.file); }
+    if (phone.length && (!Folder.handle || Folder.perm === 'session')) this.addToSession(phone);
+    if (rest.length || attached.length) Bus.emit('folder');
+    return { attached, rest, other };
+  },
+  /** Without a folder (a phone): the files join the songs chosen this visit. */
+  addToSession(files) {
+    const keep = Folder.perm === 'session' ? Array.from(Folder.entries.values()) : [];
+    for (const f of files) { const path = f.name; if (!keep.some(e => e.path === path)) keep.push({ path, name: f.name, file: f, kind: 'media' }); }
+    Folder.entries = new Map(keep.map(e => [e.path, e])); Folder.perm = 'session'; Folder.scannedAt = now();
+  },
+  report(r) {
+    const n = r.attached.length;
+    const parts = [];
+    if (n) parts.push(n === 1 ? '“' + r.attached[0].m.title + '” now plays from your file' + (r.attached[0].where === 'folder' ? ' (copied into your media folder)' : r.attached[0].where === 'kept' ? ' (kept in this browser for offline)' : '')
+      : n + ' songs now play from your files');
+    if (r.rest.length) { const one = r.rest.length === 1; parts.push(plural(r.rest.length, 'file') + ' had no lesson yet: ' + (Folder.perm === 'granted' ? (one ? 'it is' : 'they are') + ' in your media folder, ready to make ' + (one ? 'a lesson' : 'lessons') + ' from' : (one ? 'it is' : 'they are') + ' listed under your songs')); }
+    if (!n && !r.rest.length) parts.push(r.other.length ? 'Those were not audio or video files.' : 'No songs were found in what you chose.');
+    toast(parts.join('. ') + '.', n ? 'good' : '');
+  },
+  /** A file picker for songs (and album ZIPs); the files go through take(). */
+  picker(id, onDone) {
+    return h('input.visually-hidden', { type: 'file', id, multiple: true, accept: 'audio/*,video/*,.mp3,.m4a,.aac,.flac,.ogg,.opus,.wav,.mp4,.webm,.mkv,.mov,.zip,application/zip', onchange: async e => {
+      const files = Array.from(e.target.files || []); e.target.value = '';
+      if (!files.length) return;
+      toast('Looking at ' + plural(files.length, 'file') + '…');
+      const r = await this.take(files);
+      this.report(r);
+      if (onDone) onDone(r); else App.render(false);
+    } });
+  },
+  /** One lesson's file, chosen by hand: no matching needed, but the same copying and timing. */
+  async pickFor(m, file) {
+    if (/\.zip$/i.test(file.name)) {
+      const ents = (await Zip.list(file)).filter(x => Folder.MEDIA.test(x.name));
+      const its = [];
+      for (const ent of ents) { const blob = await Zip.blob(file, ent), name = ent.name.replace(/^.*\//, ''); its.push({ file: new File([blob], name, { type: blob.type || '' }), name }); }
+      const p = (await this.match(its, [m]))[0];
+      if (!p) throw new Error('None of the songs in that ZIP looks like “' + m.title + '”.');
+      return this.attach(m, p.it.file, { meta: p.it.meta, saveAs: this.safeName([m.artist, m.title].filter(Boolean).join(' - ')) + (p.it.name.match(/\.[^.]+$/) || [''])[0] });
+    }
+    return this.attach(m, file, {});
+  },
+
+  /* ----- new files in the media folder ----- */
+  /** Coming back to the game (from a store, say): look in the media folder again. */
+  async rescan() {
+    if (this._busy || !Folder.handle || Folder.perm !== 'granted' || Folder.scanning) return;
+    if (now() - (Folder.scannedAt || 0) < 8000) return;
+    this._busy = true;
+    try {
+      const before = new Set(Folder.entries.keys());
+      await Folder.scan();
+      const added = Array.from(Folder.entries.keys()).filter(k => !before.has(k));
+      if (added.length) Bus.emit('folder');
+      else await this.lookAround(true);
+    } finally { this._busy = false; }
+  },
+  /** Folder files (and ZIPs) that belong to lessons without a file: attach them. */
+  async lookAround(quiet) {
+    if (this._looking || !Folder.connected()) return;
+    const lessons = Lib.list.filter(m => this.needs(m));
+    if (!lessons.length) return;
+    this._looking = true;
+    try {
+      const sig = lessons.map(m => m.id).join(',');
+      const items = [];
+      for (const e of Folder.media()) {
+        if (Folder.lessonFor(e)) continue;
+        const k = e.path + '|' + sig; if (this._seen.has(k)) continue;
+        this._seen.set(k, 1);
+        if (!this.maybe(e.name, lessons)) continue;
+        try { items.push({ file: await Folder.fileOf(e), name: e.name, entry: e }); } catch (err) {}
+      }
+      const done = [];
+      for (const p of await this.match(items, lessons)) {
+        await this.attach(p.m, p.it.file, { entry: p.it.entry, meta: p.it.meta });
+        done.push(p.m);
+      }
+      // album ZIPs dropped into the folder: unpack the tracks of saved songs (and the album beside them)
+      if (Folder.perm === 'granted') for (const z of await this.folderZips()) {
+        if (this._zips.has(z.key)) continue;
+        this._zips.add(z.key);
+        try {
+          const ents = (await Zip.list(z.file)).filter(x => Folder.MEDIA.test(x.name) && !/(^|\/)__MACOSX\//.test(x.name));
+          if (!ents.length) continue;
+          const album = z.name.replace(/\.zip$/i, ''), its = [];
+          for (const ent of ents) { const name = ent.name.replace(/^.*\//, ''); if (Folder.entries.has(this.safeName(album) + '/' + this.safeName(name))) continue; const blob = await Zip.blob(z.file, ent); its.push({ file: new File([blob], name), name }); }
+          if (!its.length) continue;
+          const left = Lib.list.filter(m => this.needs(m));
+          const pairs = await this.match(its, left);
+          for (const it of its) {
+            const e = await this.toFolder(it.file, it.name, album);
+            const p = pairs.find(x => x.it === it);
+            if (p && e) { await this.attach(p.m, it.file, { entry: e, meta: it.meta }); done.push(p.m); }
+          }
+          Bus.emit('folder');
+        } catch (err) { console.warn('zip', err); }
+      }
+      if (done.length && !quiet) toast(done.length === 1 ? '“' + done[0].title + '” found in your media folder: it now plays offline.' : plural(done.length, 'song') + ' found in your media folder: they now play offline.', 'good');
+      else if (done.length) toast(done.length === 1 ? '“' + done[0].title + '” now plays from your media folder.' : plural(done.length, 'song') + ' now play from your media folder.', 'good');
+      if (done.length && (App.cur === 'library' || App.cur === 'media')) App.render(false);
+    } finally { this._looking = false; }
+  },
+  async folderZips() {
+    if (!Folder.handle || Folder.perm !== 'granted') return [];
+    const out = [];
+    try {
+      for await (const [name, hd] of Folder.handle.entries()) {
+        if (hd.kind !== 'file' || !/\.zip$/i.test(name)) continue;
+        const f = await hd.getFile();
+        out.push({ name, file: f, key: name + '|' + f.size + '|' + f.lastModified });
+      }
+    } catch (e) {}
+    return out;
   }
 };
 
@@ -18146,7 +18778,7 @@ const Bgm = {
   },
   lineAt(t) {
     const m = this.m; if (!m || !isTimed(m)) return -1;
-    t -= m.offset || 0;
+    t -= Lib.off(m);
     for (let i = 0; i < m.lines.length; i++) { const L = m.lines[i]; if (t >= L.a - 0.15 && t < L.b + 0.4) return i; if (L.a > t) break; }
     return -1;
   },
@@ -18353,6 +18985,423 @@ const Backdrop = {
   }
 };
 
+/* ===== 68-wordtime.js ===== */
+/* ---------- 68-wordtime: when each word is sung ---------- */
+'use strict';
+/* LRC files time lines, not words, and the open lyrics database has no word timing for these songs. So the game times
+   the words itself:
+   - from the song's audio, when the lesson plays a file of its own: Japanese is sung about one mora per note, so the
+     note onsets in the line (a spectral-flux detector made for the voice, "SuperFlux") are matched to the line's morae,
+     in order, by dynamic programming with a steady-pulse prior;
+   - by the learner, tapping each word as it is sung (Tap the words);
+   - otherwise estimated: the line's morae spread over the part that is sung, not over the pause before the next line.
+   A line's word timing: L.wt = [[character offset, time], ...] (word starts), L.we = when the singing ends,
+   L.wsrc = 'audio' | 'tap'. */
+
+const WordTime = {
+  FPS: 100, SR: 16000,
+
+  /* ----- morae ----- */
+  /** The morae of a reading. Kinds: v (a new note), n (ん), long (ー: the same note held), q (っ: a short stop). */
+  morae(kana) {
+    const out = [];
+    for (const ch of Array.from(JP.toHira(String(kana || '')))) {
+      if (/[ゃゅょぁぃぅぇぉゎ]/.test(ch) && out.length) { out[out.length - 1].s += ch; continue; }
+      if (ch === 'ー' || ch === '〜' || ch === '～') out.push({ k: 'long', s: ch });
+      else if (ch === 'っ') out.push({ k: 'q', s: ch });
+      else if (ch === 'ん') out.push({ k: 'n', s: ch });
+      else if (/[ぁ-ゖ]/.test(ch)) out.push({ k: 'v', s: ch });
+      else if (/[A-Za-z0-9]/.test(ch)) out.push({ k: 'v', s: ch, latin: 1 });
+    }
+    return out;
+  },
+  /** The line's words, each with its place in the line and its morae. Words of Latin letters count about a mora per two letters. */
+  words(L, A) {
+    const segs = JP.alignTokens(L.jp, A && A.t ? A.t : []), out = [];
+    let at = 0;
+    for (const sg of segs) {
+      if (sg.gap != null) { at += sg.gap.length; continue; }
+      const tok = sg.tok, s = tok.s || '';
+      const at0 = sg.loose ? L.jp.indexOf(s, at) : at;
+      let mo = this.morae(tok.r || s);
+      if (!mo.length && /[A-Za-z]/.test(s)) mo = Array.from({ length: Math.max(1, Math.round(s.replace(/[^A-Za-z]/g, '').length / 2)) }, () => ({ k: 'v', s: '' }));
+      if (!mo.length && JP.hasJapanese(s)) mo = Array.from({ length: Math.max(1, Array.from(s).length * 2) }, () => ({ k: 'v', s: '' }));
+      out.push({ k: sg.k, at: at0 < 0 ? at : at0, len: s.length, morae: mo, punct: !mo.length });
+      if (!sg.loose) at += s.length;
+    }
+    return out;
+  },
+  /** Onset-bearing morae with their length in mora units (held vowels and stops add to the note before them). */
+  beats(words) {
+    const beats = [];
+    words.forEach((w, wi) => w.morae.forEach((mo, mi) => {
+      if (mo.k === 'v' || mo.k === 'n' || !beats.length) beats.push({ wi, mi, w: mo.k === 'n' ? 0.8 : 1 });
+      else beats[beats.length - 1].w += mo.k === 'long' ? 1 : 0.6;
+    }));
+    return beats;
+  },
+
+  /* ----- marks for the karaoke and the word card ----- */
+  /** Start and end times for each word of a line: from its word timing, else estimated. [{k, at, s, e}] */
+  marks(L, A) {
+    if (!L || L.a == null || L.b == null || !A) return [];
+    const words = this.words(L, A).filter(w => !w.punct);
+    if (!words.length) return [];
+    let starts = null, end = L.we || null;
+    if (L.wt && L.wt.length) {
+      const map = new Map(L.wt.map(p => [p[0], p[1]]));
+      starts = words.map(w => map.has(w.at) ? map.get(w.at) : null);
+      if (starts.filter(x => x != null).length < Math.ceil(words.length / 2)) starts = null;
+      else {                                                       // words not timed: between their neighbours
+        for (let i = 0; i < starts.length; i++) if (starts[i] == null) {
+          let j = i; while (j < starts.length && starts[j] == null) j++;
+          const t0 = i ? starts[i - 1] : L.a, t1 = j < starts.length ? starts[j] : (end || L.b);
+          for (let x = i; x < j; x++) starts[x] = t0 + (t1 - t0) * (x - i + 1) / (j - i + 1);
+        }
+      }
+    }
+    if (!starts) {
+      // estimated: the morae spread over the part that is sung, at most about 0.42 s a mora, so a pause before the next line is not
+      const beats = this.beats(words), W = beats.reduce((s, b) => s + b.w, 0) || 1, span = Math.max(0.3, L.b - L.a);
+      const sung = Math.min(span, Math.max(0.6, W * 0.42)), unit = sung / W;
+      starts = []; let acc = 0, bi = 0;
+      words.forEach((w, wi) => { starts[wi] = L.a + acc * unit; while (bi < beats.length && beats[bi].wi === wi) { acc += beats[bi].w; bi++; } });
+      end = end || L.a + sung;
+    }
+    end = end || L.b;
+    return words.map((w, i) => ({ k: w.k, at: w.at, s: starts[i], e: i + 1 < words.length ? starts[i + 1] : Math.max(starts[i] + 0.15, end) }));
+  },
+
+  /* ----- the audio ----- */
+  /** A song file as one channel at 16 kHz. */
+  async samples(blob) {
+    const buf = await blob.arrayBuffer();
+    const C = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const ac = new C(1, 2, this.SR);
+    const ab = await new Promise((res, rej) => { const p = ac.decodeAudioData(buf, res, rej); if (p && p.then) p.then(res, rej); });
+    if (ab.sampleRate === this.SR) return this.mono(ab);
+    // older browsers decode at the file's rate: resample by rendering
+    const ctx = new C(1, Math.ceil(ab.duration * this.SR), this.SR), src = ctx.createBufferSource();
+    src.buffer = ab; src.connect(ctx.destination); src.start();
+    return this.mono(await ctx.startRendering());
+  },
+  mono(ab) {
+    const n = ab.length, out = new Float32Array(n), ch = ab.numberOfChannels;
+    for (let c = 0; c < ch; c++) { const d = ab.getChannelData(c); for (let i = 0; i < n; i++) out[i] += d[i] / ch; }
+    return out;
+  },
+  /** In-place radix-2 FFT. */
+  fft(re, im) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+      if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang), half = len >> 1;
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let k = 0; k < half; k++) {
+          const a = i + k, b = a + half, xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+          re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi;
+          const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+        }
+      }
+    }
+  },
+  /** Log-spaced bands, 24 an octave, 100 Hz – 5 kHz, weighted towards the voice. */
+  bands(nfft, sr) {
+    const bins = nfft / 2 + 1, hz = sr / nfft, f = [];
+    for (let x = Math.log2(100); x <= Math.log2(5000); x += 1 / 24) f.push(Math.pow(2, x));
+    const out = [];
+    for (let i = 1; i + 1 < f.length; i++) {
+      const lo = f[i - 1] / hz, c = f[i] / hz, hi = f[i + 1] / hz, w = [];
+      for (let k = Math.max(1, Math.floor(lo)); k <= Math.min(bins - 1, Math.ceil(hi)); k++) {
+        const g = k < c ? (k - lo) / Math.max(1e-6, c - lo) : (hi - k) / Math.max(1e-6, hi - c);
+        if (g > 0) w.push([k, g]);
+      }
+      if (!w.length) continue;
+      const fc = f[i], voice = fc >= 250 && fc <= 3500 ? 1 : 0.5;
+      const prev = out[out.length - 1];
+      if (prev && prev.w.length === w.length && prev.w[0][0] === w[0][0]) continue;   // the same bins as the band below
+      out.push({ w, voice });
+    }
+    return out;
+  },
+  /** How much new sound starts in each 10 ms frame, for the voice. Log-spaced bands; drums are taken out by splitting
+      harmonic from percussive sound with median filters (sustained notes are smooth in time, hits are smooth across
+      frequency); then SuperFlux on what is harmonic (a maximum filter across bands against vibrato, the positive
+      difference with the frame 20 ms before). spans (seconds) limit the work to the sung parts. */
+  novelty(x, spans, onProgress, opt) { const g = this._nov(x, spans, onProgress, opt); let r; while (!(r = g.next()).done); return r.value; },
+  /** The same, giving the page a moment every 30 ms so it stays responsive (a whole song takes a second or two). */
+  async noveltyAsync(x, spans, onProgress, opt) {
+    const g = this._nov(x, spans, onProgress, opt); let r, t = Date.now();
+    while (!(r = g.next()).done) if (Date.now() - t > 30) { await new Promise(res => setTimeout(res, 0)); t = Date.now(); }
+    return r.value;
+  },
+  *_nov(x, spans, onProgress, opt) {
+    opt = Object.assign({ hpss: true, hMed: 9, pMed: 9, lag: 2, pitch: true, held: 0.15, pw: 0.5, unvoiced: 0.3, dip: 0.65 }, opt || {});
+    const sr = this.SR, hop = sr / this.FPS, nfft = 1024, frames = Math.floor(x.length / hop);
+    const nov = new Float32Array(frames), win = new Float32Array(nfft);
+    for (let i = 0; i < nfft; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (nfft - 1));
+    const B = this.bands(nfft, sr), NB = B.length, re = new Float32Array(nfft), im = new Float32Array(nfft);
+    const want = new Uint8Array(frames);
+    for (const [a, b] of spans || [[0, x.length / sr]]) for (let f = Math.max(0, Math.floor(a * this.FPS) - 12); f < Math.min(frames, Math.ceil(b * this.FPS) + 12); f++) want[f] = 1;
+    // runs of wanted frames, each worked on alone
+    const runs = []; for (let f = 0; f < frames; f++) if (want[f]) { const r0 = f; while (f < frames && want[f]) f++; runs.push([r0, f]); }
+    // the melody: the strongest harmonic series, 100–1000 Hz, a third of a semitone apart
+    const cands = []; for (let m = 43; m <= 83; m += 1 / 3) cands.push({ m, f: 440 * Math.pow(2, (m - 69) / 12) });
+    const mag = new Float32Array(nfft / 2 + 1), hzBin = sr / nfft;
+    const taps = cands.map(c => { const t = []; for (let hN = 1; hN <= 8; hN++) { const pos = c.f * hN / hzBin; if (pos >= nfft / 2) break; const k = Math.floor(pos); t.push(k, pos - k, Math.pow(0.84, hN - 1)); } return Float32Array.from(t); });
+    const pitch = new Float32Array(frames).fill(NaN), sal = new Float32Array(frames), energy = new Float32Array(frames);
+    const total = runs.reduce((s, r) => s + r[1] - r[0], 0); let doneF = 0;
+    const med = (arr, n) => { for (let i = 1; i < n; i++) { const v = arr[i]; let j = i - 1; while (j >= 0 && arr[j] > v) { arr[j + 1] = arr[j]; j--; } arr[j + 1] = v; } return arr[n >> 1]; };
+    for (const [r0, r1] of runs) {
+      const T = r1 - r0, M = new Float32Array(T * NB);
+      for (let f = r0; f < r1; f++) {
+        const c = f * hop - nfft / 2;
+        for (let i = 0; i < nfft; i++) { const j = c + i; re[i] = j >= 0 && j < x.length ? x[j] * win[i] : 0; im[i] = 0; }
+        this.fft(re, im);
+        const o = (f - r0) * NB;
+        for (let k = 0; k < mag.length; k++) mag[k] = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
+        for (let b = 0; b < NB; b++) { let sm = 0; for (const [k, g] of B[b].w) sm += g * mag[k]; M[o + b] = sm; }
+        if (opt.pitch) {
+          let bestS = 0, bestM = NaN, tot = 0;
+          for (let ci = 0; ci < cands.length; ci++) {
+            const t = taps[ci]; let sv = 0;
+            for (let j = 0; j < t.length; j += 3) { const k = t[j], fr = t[j + 1]; sv += (mag[k] * (1 - fr) + mag[k + 1] * fr) * t[j + 2]; }
+            tot += sv; if (sv > bestS) { bestS = sv; bestM = cands[ci].m; }
+          }
+          pitch[f] = bestM; sal[f] = tot ? bestS / (tot / cands.length) : 0;
+        }
+        if (onProgress && !(++doneF % 1500)) onProgress(doneF / total);
+        if (!(f & 31)) yield;
+      }
+      let S = M;
+      if (opt.hpss && T > opt.hMed) {
+        // harmonic: median over time; percussive: median over bands; keep the harmonic share
+        const S2 = new Float32Array(T * NB), buf = new Float32Array(Math.max(opt.hMed, opt.pMed)), hh = opt.hMed >> 1, ph = opt.pMed >> 1;
+        for (let t = 0; t < T; t++) for (let b = 0; b < NB; b++) {
+          if (!b && !(t & 63)) yield;
+          let n = 0; for (let d = -hh; d <= hh; d++) { const u = Math.min(T - 1, Math.max(0, t + d)); buf[n++] = M[u * NB + b]; }
+          const H = med(buf, n); n = 0;
+          for (let d = -ph; d <= ph; d++) { const c2 = Math.min(NB - 1, Math.max(0, b + d)); buf[n++] = M[t * NB + c2]; }
+          const P = med(buf, n), v = M[t * NB + b];
+          S2[t * NB + b] = v * (H * H) / (H * H + P * P + 1e-12);
+        }
+        S = S2;
+      }
+      const L = new Float32Array(T * NB); for (let i = 0; i < L.length; i++) L[i] = Math.log10(1 + 20 * S[i]);
+      for (let t = 0; t < T; t++) { let e = 0; for (let b = 0; b < NB; b++) e += S[t * NB + b] * B[b].voice; energy[r0 + t] = e; }
+      for (let t = opt.lag; t < T; t++) {
+        let d = 0; const o = t * NB, p = (t - opt.lag) * NB;
+        for (let b = 0; b < NB; b++) {
+          const ref = Math.max(L[p + b], b ? L[p + b - 1] : 0, b + 1 < NB ? L[p + b + 1] : 0), v = L[o + b] - ref;
+          if (v > 0) d += v * B[b].voice;
+        }
+        nov[r0 + t] = d;
+      }
+    }
+    if (!opt.pitch) return nov;
+    // a voice holding one note makes no new onset, whatever the drums do; a new note does, even with no consonant
+    const vals = []; for (let f = 0; f < frames; f++) if (want[f]) vals.push(nov[f]);
+    vals.sort((p, q) => p - q);
+    const scale = vals.length ? vals[Math.floor(vals.length * 0.9)] || 1 : 1;
+    const sv = []; for (let f = 0; f < frames; f++) if (want[f] && sal[f]) sv.push(sal[f]);
+    sv.sort((p, q) => p - q);
+    const voicedAt = sv.length ? sv[Math.floor(sv.length * 0.35)] : 0;
+    const voiced = f => f >= 0 && f < frames && want[f] && sal[f] > voicedAt && !isNaN(pitch[f]);
+    const smooth = new Float32Array(frames).fill(NaN);
+    for (let f = 0; f < frames; f++) if (voiced(f)) { const w = []; for (let d = -2; d <= 2; d++) if (voiced(f + d)) w.push(pitch[f + d]); w.sort((p, q) => p - q); smooth[f] = w[w.length >> 1]; }
+    if (this._debug) Object.assign(this._debug, { pitch, smooth, sal, voicedAt });
+    const out = new Float32Array(frames);
+    for (let f = 0; f < frames; f++) {
+      if (!(f & 511)) yield;
+      if (!want[f]) continue;
+      let v = nov[f] / scale, pn = 0;
+      const p0 = smooth[f], pb = smooth[f - 3], pa = smooth[f + 3];
+      if (!isNaN(p0) && !isNaN(pb)) { const j = Math.abs(p0 - pb); if (j > 0.6) pn = Math.min(3, j - 0.6 + 0.5); }
+      else if (!isNaN(p0) && isNaN(pb)) pn = 1;                                   // the voice starts
+      // held: the same note before and after (medians over 20–80 ms each side, so vibrato does not count as a change)
+      const side = (d0, d1) => { const w = []; for (let d = d0; d <= d1; d++) if (!isNaN(smooth[f + d])) w.push(smooth[f + d]); if (w.length < 3) return NaN; w.sort((p, q) => p - q); return w[w.length >> 1]; };
+      const before = side(-8, -2), after = side(2, 8);
+      // a re-sung note on the same pitch dips in loudness first (a consonant, a breath): that is not held
+      let lo = Infinity, hi = 0; for (let d = -6; d <= -1; d++) if (f + d >= 0) lo = Math.min(lo, energy[f + d]);
+      for (let d = -14; d <= 4; d++) if (f + d >= 0 && f + d < frames && (d < -6 || d >= 0)) hi = Math.max(hi, energy[f + d]);
+      const dip = hi > 0 && lo < opt.dip * hi;
+      const held = !dip && !isNaN(p0) && !isNaN(before) && !isNaN(after) && Math.abs(after - before) < 0.7;
+      let near = false; for (let d = 0; d <= 5 && !near; d++) near = voiced(f + d);       // a note starts where the voice is (or is about to be)
+      out[f] = (v * (held ? opt.held : 1) + opt.pw * pn) * (near ? 1 : opt.unvoiced);
+    }
+    // where the voice is, for the aligner: runs of at least 60 ms
+    const voice = new Uint8Array(frames);
+    for (let f = 0; f < frames; f++) if (voiced(f)) { let r = f; while (r < frames && voiced(r)) r++; if (r - f >= 6) voice.fill(1, f, r); f = r; }
+    out.voice = voice;
+    return out;
+  },
+  /** The song's pulse (the time between notes it moves in, 0.1–0.45 s), from the autocorrelation of its note onsets in the
+      sung parts: the shortest lag nearly as strong as the strongest, so eighth notes rather than quarters. */
+  pulse(nov, spans) {
+    const fps = this.FPS, frames = [];
+    for (const [a, b] of spans) { const seg = []; for (let f = Math.max(0, Math.round(a * fps)); f < Math.min(nov.length, Math.round(b * fps)); f++) seg.push(nov[f]); if (seg.length > 60) frames.push(seg); }
+    if (!frames.length) return 0;
+    const ac = new Float64Array(46);
+    for (const seg of frames) {
+      const mean = seg.reduce((x, y) => x + y, 0) / seg.length, v = seg.map(x => x - mean);
+      for (let lag = 10; lag <= 45; lag++) { let sm = 0; for (let i = lag; i < v.length; i++) sm += v[i] * v[i - lag]; ac[lag] += sm / (v.length - lag); }
+    }
+    let best = 10; for (let lag = 10; lag <= 45; lag++) if (ac[lag] > ac[best]) best = lag;
+    if (ac[best] <= 0) return 0;
+    for (let lag = 10; lag < best; lag++) if (ac[lag] >= 0.75 * ac[best] && ac[lag] >= ac[lag - 1] && ac[lag] >= ac[lag + 1]) { best = lag; break; }
+    return best / fps;
+  },
+  /** Place a line's beats (onset-bearing morae, w = length in mora units) between a and b on the novelty curve.
+      Returns { times, end, conf } or null. */
+  alignLine(nov, a, b, beats, opt) {
+    opt = Object.assign({ alpha: 1.1, dmaxK: 2.6, dminK: 0.4, norm: 'mad', voiceEnds: true, prior0: 2, pulse: 0, beta: 0.25, bias: 0, floor: 0.05, q: 0.9, k: 3, cap: 12 }, opt || {});
+    if (opt.pulse) opt.alpha = opt.palpha || 2;
+    const fps = this.FPS, N = beats.length;
+    if (!N || b - a < 0.2) return null;
+    const F0 = Math.max(0, Math.round((a - 0.25) * fps)), F1 = Math.min(nov.length, Math.round(b * fps));
+    const F = F1 - F0; if (F < N + 2) return null;
+    // the line's novelty against its own strong values (most frames are near nothing, so not median-based)
+    const seg = Array.from(nov.subarray(F0, F1)), sorted = seg.slice().sort((p, q) => p - q);
+    let z;
+    if (opt.norm === 'lin') { const top = sorted[Math.floor(sorted.length * opt.q)] || sorted[sorted.length - 1] || 1; z = seg.map(v => Math.min(opt.cap, opt.k * v / (top + 1e-9))); }
+    else if (opt.norm === 'top') { const top = sorted[Math.floor(sorted.length * 0.9)] || sorted[sorted.length - 1] || 1; z = seg.map(v => Math.min(4, 2.5 * v / (top + 1e-9)) - 0.3); }
+    else {                                                                // robust z-scores, with a floor so a mostly quiet line still has a scale
+      const med = sorted[sorted.length >> 1], mad = Math.max(sorted.map(v => Math.abs(v - med)).sort((p, q) => p - q)[sorted.length >> 1] * 1.4826, opt.floor * (sorted[Math.floor(sorted.length * 0.95)] || 1), 1e-6);
+      z = seg.map(v => Math.max(-1, Math.min(opt.cap, (v - med) / mad)) - opt.bias);
+    }
+    // a peak scores, the frames next to it a little less
+    const E = z.map((v, i) => Math.max(v, 0.6 * (z[i - 1] || -1), 0.6 * (z[i + 1] || -1)));
+    const W = beats.reduce((s, x) => s + x.w, 0), fa = a * fps - F0;
+    let best = null;
+    const span = b - a, ends = [];
+    if (nov.voice && opt.voiceEnds) {                                    // the singing ends where the voice last stops in the line
+      let last = -1; for (let f = Math.round(a * fps); f < F1; f++) if (nov.voice[f]) last = f;
+      if (last > a * fps + 10) { const vEnd = last / fps; ends._v = Math.min(b, vEnd + 0.1); ends.push(vEnd + 0.05, vEnd + 0.2, Math.min(b, vEnd + 0.45)); }
+    }
+    for (const frac of [1, 0.85, 0.7, 0.55, 0.42]) ends.push(a + span * frac);
+    if (opt.pulse) ends.length = 0, ends.push(nov.voice && opt.voiceEnds ? Math.min(b, (ends._v || b)) : b);
+    for (const e of ends) {
+      if (e <= a + 0.2 || e > b + 0.01) continue;
+      const U = opt.pulse ? opt.pulse * fps : (e - a) * fps / W;         // frames per mora unit
+      if (U < 7 || U > 60) continue;
+      const S = [], P = [];
+      let row = new Float32Array(F).fill(-1e9), from = new Int32Array(F).fill(-1);
+      for (let f = 0; f < F; f++) { const d = (f - fa) / (0.2 * fps); row[f] = E[f] + opt.prior0 * Math.exp(-d * d / 2) - (d < -1.2 ? 4 : d > 4 ? 3 : 0); }
+      S.push(row); P.push(from);
+      for (let i = 1; i < N; i++) {
+        const wPrev = beats[i - 1].w, exp = wPrev * U;
+        const dmin = opt.pulse ? Math.max(4, Math.floor(0.4 * U)) : Math.max(4, Math.floor(opt.dminK * exp));
+        const dmax = opt.pulse ? Math.ceil(Math.max(4.5, wPrev + 2.5) * U) : Math.max(dmin + 2, Math.ceil(opt.dmaxK * exp));
+        const cost = new Float32Array(dmax + 1);
+        for (let d = dmin; d <= dmax; d++) {
+          if (!opt.pulse) { const r = Math.log(d / exp); cost[d] = opt.alpha * r * r; continue; }
+          let c = 1e9;                                                    // a whole number of pulses (a held note is 2, 3…), half a pulse for quick notes
+          for (const k of [0.5, 1, 1.5, 2, 3, 4]) { const r = Math.log(d / (k * U)); c = Math.min(c, opt.alpha * r * r + opt.beta * Math.abs(k - wPrev) + (k % 1 ? 0.3 : 0)); }
+          cost[d] = c;
+        }
+        const prevRow = S[i - 1], cur = new Float32Array(F).fill(-1e9), fr = new Int32Array(F).fill(-1);
+        for (let f = 0; f < F; f++) {
+          let m = -1e9, arg = -1;
+          for (let d = dmin; d <= dmax && f - d >= 0; d++) {
+            const p = prevRow[f - d]; if (p <= -1e8) continue;
+            const v = p - cost[d];
+            if (v > m) { m = v; arg = f - d; }
+          }
+          if (arg >= 0) { cur[f] = m + E[f]; fr[f] = arg; }
+        }
+        S.push(cur); P.push(fr);
+      }
+      // the last note must fit before the end
+      const last = S[N - 1], endF = e * fps - F0, lastLen = beats[N - 1].w * U;
+      let bf = -1, bv = -1e9;
+      for (let f = 0; f < F; f++) { if (last[f] <= -1e8) continue; const over = Math.max(0, f + 0.5 * lastLen - endF) / fps; const v = last[f] - 4 * over; if (v > bv) { bv = v; bf = f; } }
+      if (bf < 0) continue;
+      const fs = new Array(N); fs[N - 1] = bf; for (let i = N - 1; i > 0; i--) fs[i - 1] = P[i][fs[i]];
+      const q75 = sorted[Math.floor(sorted.length * 0.75)];
+      const isPeak = f => { for (let d = -2; d <= 2; d++) { const g = f + d; if (g > 0 && g + 1 < F && seg[g] >= q75 && seg[g] >= seg[g - 1] && seg[g] >= seg[g + 1]) return true; } return false; };
+      const conf = fs.filter(isPeak).length / N, score = bv / N;
+      if (!best || score > best.score) best = { score, conf, times: fs.map(f => (f + F0) / fps), end: Math.min(b, (fs[N - 1] + F0) / fps + Math.max(0.2, lastLen / fps)) };
+    }
+    return best;
+  },
+  /** Time every line of a lesson from its own audio file. */
+  async fromAudio(m, onProgress) {
+    const blob = await this.blobOf(m);
+    if (!blob) throw new Error('This lesson has no audio file of its own on this device.');
+    onProgress && onProgress(0.02, 'Reading the song…');
+    const x = await this.samples(blob);
+    const lines = m.lines.map((L, i) => ({ L, i })).filter(o => o.L.a != null && o.L.b != null && !o.L.gap && JP.hasJapanese(o.L.jp));
+    const off = m.offset || 0;
+    const spans = lines.map(o => [o.L.a + off - 0.4, o.L.b + off + 0.1]);
+    onProgress && onProgress(0.08, 'Listening for the notes…');
+    const nov = await this.noveltyAsync(x, spans, p => onProgress && onProgress(0.08 + 0.6 * p, 'Listening for the notes…'));
+    const pulse = this.pulse(nov, spans);
+    let done = 0, timed = 0, sure = 0;
+    for (const st of m.stages) {
+      const d = await Offline.stage(m, m.stages.indexOf(st));
+      for (let li = st.from; li <= st.to; li++) {
+        const L = m.lines[li], A = d && d.lines[li - st.from];
+        if (!L || L.a == null || L.b == null || L.gap || !A || L.wsrc === 'tap') continue;
+        const words = this.words(L, A).filter(w => !w.punct), beats = this.beats(words);
+        const r = beats.length ? this.alignLine(nov, L.a + off, L.b + off, beats, { pulse }) : null;
+        done++;
+        if (!r || r.conf < 0.5) { if (L.wsrc === 'audio') this.clear(L); continue; }
+        const firstBeat = new Map(); beats.forEach((bt, i) => { if (!firstBeat.has(bt.wi)) firstBeat.set(bt.wi, r.times[i] - off); });
+        L.wt = words.map((w, wi) => firstBeat.has(wi) ? [w.at, Math.round(firstBeat.get(wi) * 100) / 100] : null).filter(Boolean);
+        L.we = Math.round((r.end - off) * 100) / 100; L.wsrc = 'audio'; L.wconf = Math.round(r.conf * 10) / 10;
+        timed++; if (r.conf >= 0.75) sure++;
+        if (!(done % 6)) { onProgress && onProgress(0.7 + 0.28 * done / lines.length, 'Timing the words…'); await sleep(0); }
+      }
+    }
+    m.wordTimed = { at: now(), lines: timed, of: lines.length, sure, pulse, file: m.fileName || '' };
+    await Lib.saveContent(m);
+    Bus.emit('wordtime', m.id);
+    onProgress && onProgress(1, 'Done');
+    return m.wordTimed;
+  },
+  /** The lesson's own audio, if this device has it: the media folder, a copy kept in the browser. */
+  async blobOf(m) {
+    const e = m.fileName ? Folder.find(m) : null;
+    if (e && (e.file || Folder.perm === 'granted')) { try { return await Folder.fileOf(e); } catch (err) {} }
+    try { const rec = await MediaCache.get(m.id); if (rec && rec.blob) return rec.blob; } catch (err) {}
+    const f = Player.info(m.id);                                   // playing from a file picked this visit, or beside the game
+    if (f && f.url && !f.yt) { try { const r = await fetch(f.url); if (r.ok) return await r.blob(); } catch (err) {} }
+    return null;
+  },
+  hasAudio(m) {
+    if (!m) return false;
+    const e = m.fileName ? Folder.find(m) : null;
+    if (e && (e.file || Folder.perm === 'granted')) return true;
+    return (Player.has(m.id) && !Player.isYouTube(m.id)) || (typeof Shelf !== 'undefined' && Shelf.kept.has(m.id));
+  },
+  /** Time the words in the background once a lesson has its own file: one lesson at a time, after the page settles. */
+  queue(m) {
+    if (!m || !isTimed(m) || (m.wordTimed && m.wordTimed.file === (m.fileName || '') && m.wordTimed.lines)) return;
+    this._q = this._q || [];
+    if (this._q.indexOf(m.id) === -1) this._q.push(m.id);
+    if (!this._running) setTimeout(() => this._run(), 1500);
+  },
+  async _run() {
+    if (this._running) return;
+    this._running = true;
+    try {
+      while (this._q && this._q.length) {
+        const m = Lib.get(this._q.shift());
+        if (!m || !this.hasAudio(m)) continue;
+        if (Offline.wanted() && !Offline.ready()) { try { await Offline.load(); } catch (e) {} }
+        try { const r = await this.fromAudio(m); if (r.lines) toast('Word timing is ready for “' + m.title + '”: each word lights up as it is sung.', 'good'); }
+        catch (e) { console.warn('word timing', e); }
+        await new Promise(res => setTimeout(res, 500));
+      }
+    } finally { this._running = false; }
+  },
+  clear(L) { delete L.wt; delete L.we; delete L.wsrc; delete L.wconf; }
+};
+
 /* ===== 70-ui-core.js ===== */
 /* ---------- 70-ui-core: shell, navigation, shared pieces ---------- */
 'use strict';
@@ -18380,7 +19429,8 @@ const ICONS = {
   ear: '<path d="M7 9a5 5 0 0 1 10 0c0 3-3 3.5-3 6.5a3 3 0 0 1-6 .5"/><path d="M10 9.5a2 2 0 0 1 4 0"/>',
   chat: '<path d="M4 5h16v11H10l-5 4v-4H4z"/>',
   music: '<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
-  image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>'
+  image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>',
+  heart: '<path d="M12 20s-7.4-4.5-9.1-9.2C1.7 7.4 4 4.2 7.3 4.2c2 0 3.6 1.1 4.7 2.8 1.1-1.7 2.7-2.8 4.7-2.8 3.3 0 5.6 3.2 4.4 6.6C19.4 15.5 12 20 12 20z"/>'
 };
 function icon(name, size) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -18770,7 +19820,7 @@ function playLine(m, i, o) {
   o = o || {};
   const l = m.lines[i];
   if (lineHasClip(m, i)) {
-    Player.playSegment(m.id, l.a + (m.offset || 0), l.b + (m.offset || 0), { rate: o.rate || 1, loop: !!o.loop, onEnd: o.onEnd, onError: () => { toast('The browser could not play this file. Using the voice instead.'); Voice.speak(l.jp, { rate: o.rate }); } });
+    Player.playSegment(m.id, l.a + Lib.off(m), l.b + Lib.off(m), { rate: o.rate || 1, loop: !!o.loop, onEnd: o.onEnd, onError: () => { toast('The browser could not play this file. Using the voice instead.'); Voice.speak(l.jp, { rate: o.rate }); } });
     return 'clip';
   }
   if (Voice.available()) { Player.pause(); Voice.speak(l.jp, { rate: o.rate }).then(() => { if (o.onEnd) o.onEnd(); }); return 'voice'; }
@@ -18783,7 +19833,7 @@ function playRange(m, from, to, o) {
   const ctl = { stop() { stopped = true; clearInterval(iv); Player.pause(); Voice.stop(); } };
   const A = m.lines[from], B = m.lines[to];
   if (Player.has(m.id) && A.a != null && B.a != null) {
-    const off = m.offset || 0;
+    const off = Lib.off(m);
     iv = setInterval(() => {
       const t = Player.time() - off; let cur = -1;
       for (let i = from; i <= to; i++) if (m.lines[i].a != null && t >= m.lines[i].a - 0.15) cur = i;
@@ -18919,6 +19969,39 @@ Views.today = {
 };
 
 /* ================= Library ================= */
+/** Save a song (♡): it goes on the Library's shelf of saved songs, to be kept for offline play. */
+function heartBtn(m, o) {
+  o = o || {};
+  const label = on => o.label === false ? '' : on ? 'Saved' : 'Save';
+  const b = btn(label(m.fav), { cls: 'heart' + (m.fav ? ' on' : '') + (o.cls ? ' ' + o.cls : ''), icon: 'heart', aria: m.fav ? 'Remove from saved songs' : 'Save this song',
+    title: m.fav ? 'Saved (Library > Saved songs). Click to remove.' : 'Save this song: keep it on your shelf, ready to play offline', onclick: async e => {
+      e.stopPropagation();
+      const on = await Shelf.toggle(m);
+      b.classList.toggle('on', on); const sp = b.querySelector('span'); if (sp) sp.textContent = label(on);
+      b.setAttribute('aria-label', on ? 'Remove from saved songs' : 'Save this song');
+      if (on) toast(Shelf.status(m).ok ? '“' + m.title + '” saved. It plays offline from your file.' : '“' + m.title + '” saved. Add the song as a file (Library > Saved songs) to play it offline.', 'good');
+      if (o.onChange) o.onChange(on);
+    } });
+  return b;
+}
+/** Where to buy a song as a file you keep. */
+function storeLinks(m) {
+  return h('div.store-links', h('p.fine', 'Stores that sell “' + m.title + '” as a file you keep (no copy protection). Buy it, then add the file here:'),
+    h('ul', Shelf.links(m).map(s => h('li', h('a', { href: s.url, target: '_blank', rel: 'noopener' }, s.name), h('span.fine', ' · ' + s.note)))));
+}
+/** A file picker for one lesson's song (a ZIP works too): copied into the media folder or kept, and the timing fitted. */
+function songPicker(m, id, after) {
+  return h('input.visually-hidden', { type: 'file', id, accept: 'audio/*,video/*,.mp3,.m4a,.aac,.flac,.ogg,.opus,.wav,.mp4,.webm,.mkv,.mov,.zip', onchange: async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      toast('Adding “' + f.name + '”…');
+      const r = await Shelf.pickFor(m, f);
+      toast('“' + m.title + '” now plays from your file' + (r.entry ? ' (copied into your media folder)' : r.kept ? ' (kept in this browser for offline)' : '') + '.' + (r.fit && r.fit.moved ? ' The lines were re-timed to fit it.' : r.fit && r.fit.fit === 'off' ? ' If the lines run early or late, sync them in one tap in Watch.' : ''), 'good');
+    } catch (err) { toast(String((err && err.message) || err), 'bad'); }
+    if (after) after(); else App.render(false);
+  } });
+}
+
 Views.library = {
   render(root) {
     const page = h('div.page');
@@ -18930,6 +20013,8 @@ Views.library = {
         makeBox({ id: 'lib-make' }),
         h('p.fine', 'Or ', h('a', { href: '#', onclick: e => { e.preventDefault(); App.go('find', {}); } }, 'browse anime song lists'), ' on animesonglyrics.com.')));
     }
+    const shelf = this.savedShelf();
+    if (shelf) page.appendChild(shelf);
     const folderCard = this.folderCard();
     if (folderCard) page.appendChild(folderCard);
     if (Bgm.count()) page.appendChild(h('section.bgm-card',
@@ -18950,6 +20035,33 @@ Views.library = {
     if (!mine.length) page.appendChild(notice('', h('b', 'Bring your own media. '), 'You need two things: the audio or video file, and the Japanese words as a subtitle file (.srt, .ass, .vtt), a lyrics file (.lrc) or pasted text. The file never leaves your computer.'));
     root.appendChild(page);
   },
+  /** Saved songs: which play offline, where to get the others, and one picker for any number of files. */
+  savedShelf() {
+    const list = Shelf.saved();
+    if (!list.length) return null;
+    const off = list.filter(m => Shelf.status(m).ok).length;
+    const where = Folder.perm === 'granted' ? 'They are copied into “' + Folder.name + '”.'
+      : Folder.supported() && BUILD.local ? 'Connect your media folder (below) to keep them there; until then they are kept in this browser.' : 'They are kept in this browser, ready offline.';
+    return h('section.saved-shelf',
+      h('div.folder-head', h('div', h('h2', duo('保存', 'Saved songs')),
+        h('p.sub', plural(list.length, 'song') + ' saved · ' + off + ' play offline. Add the files you bought or already have (songs, videos, or an album ZIP): each is matched to its lesson by its tags, name and length. ' + where)),
+        h('div.btn-row', h('label.btn.primary', { for: 'shelf-add' }, icon('upload', 16), h('span', 'Add song files')), Shelf.picker('shelf-add'))),
+      h('ul.saved-list', list.map(m => this.savedRow(m))),
+      Folder.perm === 'granted' ? h('p.fine', 'Tip: save downloads into “' + Folder.name + '”: new songs and album ZIPs there attach to their lessons by themselves when you come back to the game.') : null);
+  },
+  savedRow(m) {
+    const st = Shelf.status(m), more = h('div.saved-more'), pickId = 'saved-pick-' + m.id;
+    let shown = false;
+    return h('li.saved-row',
+      h('div.saved-main', { role: 'button', tabindex: 0, onclick: () => App.go('media', { id: m.id }), onkeydown: e => { if (e.key === 'Enter') App.go('media', { id: m.id }); } },
+        h('h3.jp', { lang: 'ja' }, m.title),
+        h('p', h('span.chip' + (st.ok ? '.offline' : '.online'), st.label), ' ', [m.artist, m.anime].filter(Boolean).join(' · '))),
+      h('div.btn-row',
+        st.ok ? null : btn('Get it', { cls: 'small', icon: 'download', onclick: () => { shown = !shown; mount(more, shown ? storeLinks(m) : null); } }),
+        st.ok ? null : h('label.btn.small.ghost', { for: pickId }, h('span', 'I have the file')), st.ok ? null : songPicker(m, pickId),
+        heartBtn(m, { label: false, cls: 'small ghost', onChange: () => App.render(false) })),
+      more);
+  },
   row(m) {
     const pr = Lib.progress(m);
     return h('li.media-row', { role: 'button', tabindex: 0, onclick: () => App.go('theater', { id: m.id }), onkeydown: e => { if (e.key === 'Enter') App.go('theater', { id: m.id }); } },
@@ -18957,6 +20069,7 @@ Views.library = {
         h('h3.jp', { lang: 'ja' }, m.title),
         h('p', [m.artist, m.titleEn, typeLabel(m.type), plural(m.lines.length, 'line'), m.sample ? 'sample' : null].filter(Boolean).join(' · ')),
         h('div.media-prog', meter(pr.done / pr.total), h('span', pr.done + ' / ' + pr.total + ' stages'), stars(Math.round(pr.stars / Math.max(1, pr.total)), 3))),
+      m.sample ? null : heartBtn(m, { label: false, cls: 'small ghost', onChange: () => App.render(false) }),
       icon('next', 18));
   },
   /** The learner's media folder: every song and episode in it, ready to become a lesson. */
@@ -19257,7 +20370,7 @@ Views.media = {
       h('div', h('h1.jp', { lang: 'ja' }, m.title),
         h('p.sub', [m.artist, m.titleEn, typeLabel(m.type), plural(m.lines.length, 'line'), plural(m.stages.length, 'stage')].filter(Boolean).join(' · ')),
         m.credit ? h('p.fine', m.credit) : null),
-      h('div.media-score', h('b', pr.stars + ' / ' + pr.maxStars), h('span', 'stars'))));
+      h('div.media-side', m.sample ? null : heartBtn(m, { cls: 'small' }), h('div.media-score', h('b', pr.stars + ' / ' + pr.maxStars), h('span', 'stars')))));
     page.appendChild(h('section#media-file.filebar'));
     if (m.plan) page.appendChild(Plan.card(m));
     else if (!m.sample && Offline.ready()) page.appendChild(h('div.tool-row.plan-make', h('div', h('h3', duo('計画', 'A plan for this song')), h('p.sub', 'How hard it is for you, the words to learn first, the grammar you will meet, and a schedule.')),
@@ -19280,6 +20393,7 @@ Views.media = {
       m.sample ? null : h('div.tool-row',
         h('div', h('h3', 'Lesson pack'), h('p.sub', 'Save this lesson with its analysis as one file (' + Packs.fileName(m) + '). Open it in the other copy of the game, or on another computer. Your progress is not included.')),
         btn('Export pack', { icon: 'download', onclick: () => Packs.exportOne(m) })),
+      isTimed(m) ? this.wordTool(m) : null,
       (m.fileName || m.yt) ? h('div.tool-row',
         h('div', h('h3', duo('ながら聴き', 'Background listening')), h('p.sub', 'Keep this song playing while you study the other screens; your other songs follow. The line being sung shows in a small bar.')),
         btn('Play in the background', { icon: 'music', onclick: () => Bgm.start(m.id) })) : null,
@@ -19297,7 +20411,31 @@ Views.media = {
         btn('Remove', { cls: 'danger', icon: 'trash', onclick: () => confirmModal('Remove this lesson?', '“' + m.title + '” and its analysis will be deleted. Your words stay.', 'Remove', async () => { await Lib.remove(m.id); App.go('library'); }, true) }))));
     root.appendChild(page);
     this.drawFile();
-    if (!Player.has(m.id)) Player.ensure(m).then(ok => { if (ok && App.cur === 'media' && this.m === m) this.drawFile(); });
+    if (!Player.has(m.id)) Player.ensure(m).then(ok => { if (ok && App.cur === 'media' && this.m === m) { this.drawFile(); if (this.wordDraw) this.wordDraw(); } });
+  },
+  /** Word timing: from the song's own audio, or tapped in Watch; otherwise estimated. */
+  wordTool(m) {
+    const row = h('div.tool-row.word-tool');
+    const draw = (busy, frac, msg) => {
+      const n = m.lines.filter(l => l.wt && l.wt.length).length, of = m.lines.filter(l => l.a != null && JP.hasJapanese(l.jp)).length;
+      const tapped = m.lines.filter(l => l.wsrc === 'tap').length, audio = WordTime.hasAudio(m);
+      const status = busy ? h('div.kokoro-prog', meter(frac || 0), h('span.fine', msg || 'Working…'))
+        : h('p.sub', n ? n + ' of ' + plural(of, 'line') + ' have word timing' + (tapped ? ' (' + tapped + ' tapped by you)' : '') + (m.wordTimed && m.wordTimed.of ? ', ' + m.wordTimed.sure + ' of them sure' : '') + '. Tap a word in Watch and choose “In the song” to hear it alone.'
+          : 'Each word lights up when it is sung once its timing is known. ' + (audio ? 'The song’s own file is here, so it can be done from the audio (about 10–30 seconds).' : 'That needs the song as a file on this device (Saved songs, or your media folder); or tap the words of a line in Watch.'));
+      mount(row, h('div', h('h3', duo('単語の時間', 'Word timing')), status),
+        busy ? null : h('div.btn-row',
+          audio ? btn(n ? 'Time again' : 'Time the words', { icon: 'sync', onclick: () => run() }) : null,
+          n ? btn('Clear', { cls: 'ghost small', onclick: async () => { m.lines.forEach(l => { if (l.wsrc !== 'tap') WordTime.clear(l); }); delete m.wordTimed; await Lib.saveContent(m); draw(); } }) : null));
+    };
+    const run = async () => {
+      draw(true, 0, 'Reading the song…');
+      try { const r = await WordTime.fromAudio(m, (f, msg) => draw(true, f, msg)); toast('Word timing: ' + r.lines + ' of ' + plural(r.of, 'line') + ' timed from the song' + (r.lines - r.sure > 0 ? ' (' + (r.lines - r.sure) + ' less sure: tap those in Watch if they look off)' : '') + '.', 'good'); }
+      catch (e) { console.warn(e); toast(String((e && e.message) || e), 'bad'); }
+      draw();
+    };
+    draw();
+    this.wordDraw = () => { if (row.isConnected) draw(); };
+    return row;
   },
   node(m, st, n) {
     const first = m.lines[st.from].jp;
@@ -19318,31 +20456,28 @@ Views.media = {
     const box = $('#media-file'), m = this.m; if (!box) return;
     const has = Player.has(m.id), info = Player.info(m.id);
     const pickId = 'media-pick';
-    const input = h('input.visually-hidden', { type: 'file', id: pickId, accept: 'audio/*,video/*,.mkv,.mp3,.m4a,.flac,.ogg,.opus,.wav,.mp4,.webm,.mov', onchange: e => {
-      const f = e.target.files[0]; if (!f) return;
-      Player.attach(m.id, f); MediaCache.put(m.id, f);
-      m.fileName = f.name; m.fileSize = f.size; m.isVideo = Player.isVideo(m.id); Lib.saveContent(m);
-      this.drawFile();
-    } });
-    const kids = [];
+    const input = songPicker(m, pickId, () => { if (App.cur === 'media' && this.m === m) App.render(false); });
+    const kids = [], yt = has && Player.isYouTube(m.id), own = Shelf.own(m), more = h('div.file-more');
     if (Player.broken.has(m.id)) kids.push(h('p', h('b', 'This browser cannot play that file. '), 'MP4 (H.264 with AAC), WebM, MP3, M4A and FLAC work best. The lesson still runs with the voice.'));
-    else if (has) kids.push(h('p', h('b', 'Audio attached: '), info.name));
+    else if (yt) kids.push(h('p', h('b', 'Music video: '), 'it streams from YouTube, so it needs the internet. ', h('span.fine', 'With the song as a file, the lesson plays offline and each word can be timed.')));
+    else if (has) kids.push(h('p', h('b', 'Your file: '), info.name, ' ', h('span.chip' + (own === 'here' ? '.online' : '.offline'), own === 'folder' ? 'offline · in your media folder' : own === 'kept' ? 'offline · kept in this browser' : 'this visit only')));
     else if (m.fileName) kids.push(h('p', h('b', 'Choose “' + m.fileName + '” again '), 'to hear the original audio. Browsers cannot reopen a file by themselves.'));
     else kids.push(h('p', m.sample ? 'This sample has no recording. The voice reads each line.' : 'No audio attached. The voice reads each line.'));
-    const acts = [h('label.btn.small', { for: pickId }, icon('upload', 16), h('span', has ? 'Change file' : 'Attach file')), input];
+    const acts = [h('label.btn.small', { for: pickId }, icon('upload', 16), h('span', has && !yt ? 'Change file' : 'Add the song file')), input];
+    if (!m.sample && (!has || yt)) acts.push(btn('Get it', { cls: 'small ghost', icon: 'download', onclick: () => mount(more, more.firstChild ? null : storeLinks(m)) }));
     if (has && !m.timed) { const done = m.lines.filter(l => l.a != null).length; acts.push(btn(done ? 'Continue timing (' + done + ' of ' + m.lines.length + ')' : 'Sync timing', { cls: 'small primary', icon: 'sync', onclick: () => App.go('sync', { id: m.id }) })); }
     if (has && m.timed) {
-      const shift = dv => { m.offset = Math.round(((m.offset || 0) + dv) * 10) / 10; Lib.save(m); this.drawFile(); };
+      const shift = dv => { Lib.setOff(m, Math.round((Lib.off(m) + dv) * 10) / 10); this.drawFile(); };
       acts.push(h('span.offset', { title: 'Shift the subtitles if they run early or late against your file' },
         h('span.label', 'Subtitle timing'),
         btn('−0.5', { cls: 'small ghost', onclick: () => shift(-0.5) }), btn('−0.1', { cls: 'small ghost', onclick: () => shift(-0.1) }),
-        h('b', ((m.offset || 0) > 0 ? '+' : '') + (m.offset || 0).toFixed(1) + ' s'),
+        h('b', (Lib.off(m) > 0 ? '+' : '') + Lib.off(m).toFixed(1) + ' s'),
         btn('+0.1', { cls: 'small ghost', onclick: () => shift(0.1) }), btn('+0.5', { cls: 'small ghost', onclick: () => shift(0.5) }),
         btn('Check', { cls: 'small', icon: 'play', onclick: () => playLine(m, 0) })));
       acts.push(btn('Redo timing', { cls: 'small ghost', icon: 'sync', onclick: () => App.go('sync', { id: m.id }) }));
     }
     if (!Voice.available() && !has) kids.push(h('p.fine', 'No Japanese voice is available in this view, so lines will be silent until you attach audio.'));
-    mount(box, kids, h('div.btn-row', acts));
+    mount(box, kids, h('div.btn-row', acts), more);
   },
   /** Analyse every remaining stage in order. Started by the learner, shows progress, can be stopped. */
   prepareAll(m) {
@@ -19449,7 +20584,7 @@ Views.sync = {
       m.lines[i].a = Math.round(a * 100) / 100;
       m.lines[i].b = Math.round(Math.min(Math.max(nx, a + 0.6), a + 14) * 100) / 100;      // a sung line is rarely longer; keeps instrumental breaks out
     }
-    m.timed = k >= N; m.offset = 0;
+    m.timed = k >= N; Lib.setOff(m, 0, true);
     Lib.saveContent(m); Game.addXp(k >= N ? 10 : 3, 'sync'); Player.pause();
     toast(k >= N ? 'Timing saved. Every line now lights up as it is sung.' : k + ' lines timed. Carry on from there whenever you like.', 'good');
     App.go('theater', { id: m.id, mode: 'watch' });
@@ -20064,7 +21199,7 @@ Views.theater = {
   },
   stageOf(li) { return this.T.m.stages.findIndex(s => li >= s.from && li <= s.to); },
   A(li) { const n = this.stageOf(li), d = n >= 0 ? this.T.docs[n] : null; return d ? (d.lines.find(l => l.i === li) || null) : null; },
-  off() { return this.T.m.offset || 0; },
+  off() { return Lib.off(this.T.m); },
   t() { return Player.time() - this.off(); },
   hasMedia() { const m = this.T.m; return Player.has(m.id) && !Player.broken.has(m.id); },
   synced() { return this.hasMedia() && isTimed(this.T.m); },
@@ -20146,9 +21281,7 @@ Views.theater = {
     const pickId = 'th-pick';
     const input = h('input.visually-hidden', { type: 'file', id: pickId, accept: 'audio/*,video/*,.mkv,.mp3,.m4a,.flac,.ogg,.opus,.wav,.mp4,.webm,.mov', onchange: e => {
       const f = e.target.files[0]; if (!f) return;
-      Player.attach(m.id, f); if (!Folder.find(m)) MediaCache.put(m.id, f);
-      m.fileName = f.name; m.fileSize = f.size; m.isVideo = Player.isVideo(m.id); Lib.saveContent(m);
-      this.attachMedia();
+      Shelf.pickFor(m, f).then(r => { if (r && r.fit && r.fit.moved) toast('The lines were re-timed to fit your file.', 'good'); }).catch(err => toast(String(err.message || err), 'bad')).then(() => this.attachMedia());
     } });
     const ytBroken = Player.broken.has(m.id) && Player.isYouTube(m.id);
     const kids = [h('p.th-np-title', m.sample ? 'This sample has no recording' : ytBroken ? 'The music video cannot play here' : Player.broken.has(m.id) ? 'This browser cannot play that file' : m.fileName ? 'Where is “' + m.fileName + '”?' : 'No audio or video attached')];
@@ -20241,12 +21374,9 @@ Views.theater = {
     const lineEl = $('#th-lines .th-cur .jp-line');
     T.kara = null;
     if (!lineEl || !A || L.a == null || L.b == null) return;
-    const segs = JP.alignTokens(L.jp, A.t);
-    const weights = segs.map(sg => sg.gap != null ? Math.min(1, sg.gap.length * 0.3) : moraOf(sg.tok));
-    const total = weights.reduce((x, y) => x + y, 0) || 1;
-    let acc = 0; const marks = [];
-    segs.forEach((sg, j) => { if (sg.gap == null) { const el = lineEl.querySelector('[data-k="' + sg.k + '"]'); if (el) marks.push({ el, s: acc / total, e: (acc + weights[j]) / total }); } acc += weights[j]; });
-    T.kara = { li, marks, at: -2 };
+    const marks = [];
+    for (const mk of WordTime.marks(L, A)) { const el = lineEl.querySelector('[data-k="' + mk.k + '"]'); if (el) marks.push({ el, s: mk.s, e: mk.e }); }
+    T.kara = { li, marks, at: -2, timed: !!(L.wt && L.wt.length) };
   },
   karaoke(t) {
     const T = this.T, K = T.kara; if (!K) return;
@@ -20254,9 +21384,10 @@ Views.theater = {
     const playingHere = Player.isPlaying() && Player.cur === T.m.id;
     let at;
     if (!playingHere && K.at === -2) return;
-    if (t < L.a - 0.05) at = -1;
+    if (!K.marks.length) return;
+    if (t < K.marks[0].s - 0.05) at = -1;
     else if (t > L.b) at = K.marks.length;
-    else { const f = (t - L.a) / Math.max(0.3, L.b - L.a); at = K.marks.findIndex(mk => f < mk.e); if (at < 0) at = K.marks.length; }
+    else { at = K.marks.findIndex(mk => t < mk.e); if (at < 0) at = K.marks.length; }
     if (at === K.at) return;
     K.at = at;
     K.marks.forEach((mk, j) => { mk.el.classList.toggle('sung', j < at); mk.el.classList.toggle('now', j === at); });
@@ -20278,6 +21409,8 @@ Views.theater = {
         btn('', { cls: 'icon-btn', icon: 'prev', aria: 'Previous line', title: 'Previous line (←)', onclick: () => this.stepLine(-1) }),
         btn(playing ? 'Pause' : 'Play', { cls: 'primary', icon: playing ? 'pause' : 'play', disabled: !has && !Voice.available(), onclick: () => this.togglePlay() }),
         btn('', { cls: 'icon-btn', icon: 'next', aria: 'Next line', title: 'Next line (→)', onclick: () => this.stepLine(1) }),
+        T.tw ? btn('Tap! (' + T.tw.taps.length + '/' + T.tw.marks.length + ')', { cls: 'primary th-tap', title: 'Tap (or press T) as each word starts', onclick: () => this.tapBeat() }) :
+          btn('Tap the words', { cls: 'small ghost', icon: 'sync', title: 'Time this line’s words: tap as each word is sung (at 0.75×)', disabled: !has || !m.lines.some(l => l.a != null), onclick: () => this.tapWords() }),
         btn('Repeat line', { cls: 'small' + (T.loopLine ? ' on' : ''), icon: 'loop', title: 'Keep repeating the current line (L)', disabled: !has, onclick: () => { T.loopLine = !T.loopLine; T.loopAt = T.loopLine ? (T.cur >= 0 ? T.cur : 0) : null; this.drawCtl(); } })));
     } else if (T.mode === 'learn') {
       const li = T.learn.li == null ? 0 : T.learn.li;
@@ -20360,14 +21493,60 @@ Views.theater = {
       kj.length ? h('div.wc-kanji', kj.map(ch => { const k = Dict.kanji(ch); return h('button.wc-kj', { type: 'button', onclick: () => openKanji(ch) }, h('b', { lang: 'ja' }, ch), h('span', k ? k.meanings.slice(0, 2).join(', ') : '')); })) : null,
       status,
       h('div.btn-row', btn('Replay the line', { cls: 'small', icon: 'play', onclick: () => this.playLineAt(li, {}) }),
+        this.wordClip(li, tok),
         kj.length && Offline.wanted() ? btn('Write it', { cls: 'small ghost', title: 'Stroke order and writing practice for ' + kj.join(''), onclick: () => { $$('dialog.modal[open]').forEach(x => x.close()); App.go('write', { chars: uniq(kj), title: tok.s }); } }) : null)
     ];
     openModal({ title: tok.s, body, onClose: () => { if (wasPlaying && App.cur === 'theater' && this.T === T && T.mode === 'watch' && !Player.isPlaying()) Player.playFrom(m.id, Player.time(), T.rate); } });
   },
 
+  /** "In the song": the word as it is sung, when the line has word timing and the media can play. */
+  wordClip(li, tok) {
+    const T = this.T, m = T.m, L = m.lines[li], A = this.A(li);
+    if (!L || !L.wt || !L.wt.length || !A || !this.hasMedia()) return null;
+    const k = A.t.indexOf(tok), mk = WordTime.marks(L, A).find(x => x.k === k);
+    if (!mk) return null;
+    return btn('In the song', { cls: 'small', icon: 'speaker', title: 'Hear just this word, sung', onclick: () => Player.playSegment(m.id, mk.s + this.off() - 0.02, mk.e + this.off() - 0.12, { rate: 0.85 }) });
+  },
+
+  /* ---------- tap the words: the learner times each word of a line by tapping as it is sung ---------- */
+  tapWords() {
+    const T = this.T, m = T.m, li = T.cur >= 0 ? T.cur : (T.focus || 0), L = m.lines[li], A = this.A(li);
+    if (!L || L.a == null || !A || !this.hasMedia()) { toast('Play a timed line first.'); return; }
+    const marks = WordTime.marks(L, A); if (marks.length < 2) { toast('This line has only one word.'); return; }
+    T.tw = { li, marks, taps: [], rate: 0.75 };
+    T.loopLine = false;
+    this.drawCtl();
+    Player.playSegment(m.id, L.a + this.off() - 0.6, L.b + this.off(), { rate: 0.75, onEnd: () => { if (T.tw && T.tw.li === li) this.tapBeatsDone(); } });
+  },
+  tapBeat() {
+    const T = this.T, tw = T.tw; if (!tw) return;
+    if (tw.taps.length >= tw.marks.length) return;
+    tw.taps.push(Math.round((Player.time() - this.off() - 0.08) * 100) / 100);    // a tap comes a little after the sound
+    const el = $('#th-lines .th-cur .jp-line [data-k="' + tw.marks[tw.taps.length - 1].k + '"]'); if (el) el.classList.add('tapped');
+    if (tw.taps.length === tw.marks.length) setTimeout(() => { Player.pause(); this.tapBeatsDone(); }, 350);
+    this.drawCtl();
+  },
+  async tapBeatsDone() {
+    const T = this.T, tw = T.tw; if (!tw) return;
+    T.tw = null;
+    $$('#th-lines .tapped').forEach(x => x.classList.remove('tapped'));
+    const m = T.m, L = m.lines[tw.li];
+    if (tw.taps.length < Math.ceil(tw.marks.length * 0.6)) { toast('Not enough taps: try again and tap as each highlighted word starts.'); this.drawCtl(); return; }
+    const ok = tw.taps.every((t, i) => !i || t > tw.taps[i - 1]);
+    if (!ok) { toast('The taps went backwards: try again.'); this.drawCtl(); return; }
+    L.wt = tw.taps.map((t, i) => [tw.marks[i].at, t]);
+    L.we = Math.min(L.b, tw.taps[tw.taps.length - 1] + Math.max(0.25, (tw.taps[tw.taps.length - 1] - tw.taps[0]) / tw.taps.length));
+    L.wsrc = 'tap'; delete L.wconf;
+    await Lib.saveContent(m);
+    Game.addXp(1, 'listen');
+    toast('Timed: the words of this line now light up as you tapped them.', 'good');
+    this.prepKaraoke(tw.li); this.drawCtl();
+  },
+
   /* ---------- modes ---------- */
   setMode(mode) {
     const T = this.T, m = T.m;
+    T.tw = null;
     if (T.mode === mode && !(mode === 'play' && T.play && T.play.phase === 'done')) return;
     if (T.play && T.play.phase === 'run') T.play.phase = 'quit';
     T.play = null;
@@ -20402,8 +21581,12 @@ Views.theater = {
   /** Synced lyrics found online were timed to the album track; a music video can run longer (an intro, a story). */
   timingDoubt() {
     const m = this.T.m, d = Player.duration();
-    if (m.offsetSet) return false;
-    return !!(m.lrcDur && Player.isYouTube(m.id) && ((d > 0 && Math.abs(d - m.lrcDur) > 6) || m.timingOff));
+    if (Player.isYouTube(m.id)) {
+      if (m.ytOffset != null ? m.ytOffsetSet : m.offsetSet) return false;
+      return !!(m.lrcDur && ((d > 0 && Math.abs(d - m.lrcDur) > 6) || m.timingOff));
+    }
+    if (m.offsetSet || !this.hasMedia()) return false;
+    return !!(m.fileOff || (m.lrcDur && d > 0 && Math.abs(d - m.lrcDur) > 6));
   },
   /** One tap fixes timing that is off by a constant (a music video with an intro): play, then tap as the first line starts. */
   oneTap() {
@@ -20416,7 +21599,7 @@ Views.theater = {
   tapNow() {
     const T = this.T, m = T.m; if (!T.tap) return;
     const L = m.lines[T.tap.i0], off = Math.round((Player.time() - 0.25 - L.a) * 10) / 10;
-    m.offset = off; m.offsetSet = 1; delete m.timingOff; Lib.save(m);
+    Lib.setOff(m, off, true);
     T.tap = null;
     toast('Synced: the lines now start ' + Math.abs(off).toFixed(1) + ' s ' + (off >= 0 ? 'later' : 'earlier') + '. Fine-tune on the lesson map if needed.', 'good');
     this.drawPanel();
@@ -20443,7 +21626,7 @@ Views.theater = {
       h('h2', duo('観る', 'Watch')),
       h('p.sub', 'Play it through the way a fan would. Tap any word on the current line to look it up: the video waits for you.'),
       untimed && this.hasMedia() ? this.syncCard() : null,
-      T.tap ? this.tapCard() : !untimed && this.timingDoubt() ? h('div.notice', h('b', 'The timing may be off. '), 'The lyrics were timed to a ' + fmtClock(m.lrcDur) + ' version, but this video runs ' + fmtClock(Player.duration() || m.ytDur || 0) + '. If the lines run early or late, sync them in one tap.',
+      T.tap ? this.tapCard() : !untimed && this.timingDoubt() ? h('div.notice', h('b', 'The timing may be off. '), (m.lrcDur ? 'The lyrics were timed to a ' + fmtClock(m.lrcDur) + ' version, but ' + (Player.isYouTube(m.id) ? 'this video' : 'your file') + ' runs ' + fmtClock(Player.duration() || (Player.isYouTube(m.id) ? m.ytDur : m.fileDur) || 0) + '.' : 'The lines were timed to the music video; your file may start at another point.') + ' If the lines run early or late, sync them in one tap.',
         h('div.btn-row', btn('Sync in one tap', { cls: 'small primary', icon: 'sync', onclick: () => this.oneTap() }), btn('Time every line', { cls: 'small ghost', onclick: () => App.go('sync', { id: m.id }) }))) : null,
       h('div.th-stats',
         h('div', h('b', todayMin + ' min'), h('span', 'immersion today')),
@@ -21105,6 +22288,7 @@ Views.theater = {
       if (k === ' ' && T.play.timed) { e.preventDefault(); const q = T.play.q; if (q && q.waiting && !q.done) return; if (Player.isPlaying()) Player.pause(); else Player.playFrom(T.m.id, Player.time(), T.play.rate); this.drawCtl(); }
       return;
     }
+    if (T.tw && (k === ' ' || k === 't' || k === 'T')) { e.preventDefault(); this.tapBeat(); return; }       // tapping the words of a line
     if (k === ' ') { e.preventDefault(); if (T.mode === 'learn') this.playLineAt(T.learn.li || 0, { rate: T.rate }); else this.togglePlay(); }
     else if (k === 'ArrowLeft') { e.preventDefault(); this.stepLine(-1); }
     else if (k === 'ArrowRight') { e.preventDefault(); this.stepLine(1); }
@@ -21728,10 +22912,12 @@ Views.make = {
   doneEl() {
     const M = this.M, m = Lib.get(M.id); if (!m) return h('p', 'The lesson was made but cannot be found. Look in the Library.');
     const bg = Maker._bg && Maker._bg.has(m.id), fromDisk = location.protocol === 'file:';
+    const own = h('div.make-own-more');
     const thumb = m.yt ? h('img.find-thumb', { src: 'https://i.ytimg.com/vi/' + m.yt + '/mqdefault.jpg', alt: '', loading: 'lazy', onerror: e => e.target.remove() }) : h('div.find-thumb.none', '♪');
     const acts = h('div.btn-row',
       btn('Start stage 1', { cls: 'primary', icon: 'play', onclick: () => App.go('theater', { id: m.id, mode: 'learn', n: 0 }) }),
       isTimed(m) ? btn('Watch it first', { icon: 'eye', onclick: () => App.go('theater', { id: m.id, mode: 'watch' }) }) : null,
+      heartBtn(m, { cls: 'ghost' }),
       btn('Lesson map', { cls: 'ghost', onclick: () => App.go('media', { id: m.id }) }),
       (m.fileName || (m.yt && !fromDisk)) ? btn('Play in the background', { cls: 'ghost', icon: 'music', onclick: () => Bgm.start(m.id) }) : null,
       btn('Make another', { cls: 'ghost', icon: 'plus', onclick: () => { this.M = { q: '', busy: false, steps: {}, err: '', opts: null, r: null, id: null }; this.draw(); } }));
@@ -21742,7 +22928,10 @@ Views.make = {
           h('li', m.lines.filter(l => l.en).length ? '✓ ' + m.lines.filter(l => l.en).length + ' lines with a person’s translation' : '✗ No translation online'),
           bg ? h('li', h('span.spin'), ' ' + AI.name() + ' is translating the other lines in the background') : null,
           h('li', m.fileName ? '✓ Your own file plays, also offline' : m.yt && fromDisk ? '✗ YouTube does not play in a page opened from disk: for the video, open this lesson in the phone app (xravia.github.io/kotonoha), or put the song in your media folder' : m.yt ? '✓ The video streams from YouTube (needs the internet)' : '✗ No video: the voice reads the lines'),
-          h('li', '✓ Words, readings, grammar and translations are saved on this device')))),
+          h('li', '✓ Words, readings, grammar and translations are saved on this device'),
+          !m.fileName ? h('li.make-own', 'To play it offline: ', h('a', { href: '#', onclick: e => { e.preventDefault(); mount(own, own.firstChild ? null : storeLinks(m)); } }, 'buy the song as a file'),
+            ' or ', h('label.linkish', { for: 'make-own-pick' }, 'add one you have'), songPicker(m, 'make-own-pick', () => this.draw()), '. ♡ Save keeps it on your shelf.') : null),
+        own)),
       m.plan ? Plan.card(m, { actions: acts }) : acts);
   },
   async start(q) {
@@ -21797,7 +22986,7 @@ const SongClip = {
   async play(it) {
     const c = this.of(it); if (!c) return false;
     if (!(await Player.ensure(c.m))) return false;
-    const off = c.m.offset || 0;
+    const off = Lib.off(c.m);
     Voice.stop();
     Player.playSegment(c.m.id, c.L.a + off, c.L.b + off, { onError: () => {} });
     return true;
@@ -22950,6 +24139,13 @@ Views.guide = {
         h('li', h('b', 'What it does. '), 'It finds the Japanese lyrics and the timing made for that video’s length (LRCLIB), a person’s English translation matched line by line (animesonglyrics.com, checked against the lyrics so it is the same song), breaks every line down, and writes a plan: how hard the song is for you, the words to learn first, the grammar you will meet, and a schedule of about 20 minutes a day.'),
         h('li', h('b', 'Why songs you choose. '), 'Material you want to hear again is material you will hear again. Comprehensible input works best a little above your level; the plan says whether a song is comfortable, a stretch or a challenge, so you can pick the next one well.'),
         h('li', h('b', 'If the words run early or late. '), 'Music videos often start with an intro. In Watch, “Sync in one tap”: tap the moment the first line starts, and every line moves with it.'))));
+    if (BUILD.local) page.appendChild(h('section', h('h2', duo('保存', 'Saved songs, offline')),
+      h('ul.plain',
+        h('li', h('b', 'Save a song. '), 'The ♡ on a lesson (in the Library, on its map, or when it is made) puts it on the Library’s shelf of saved songs, which shows which ones play offline.'),
+        h('li', h('b', 'Get it as a file. '), 'A lesson made from a music video needs the internet. “Get it” searches stores that sell songs as files you keep, with no copy protection: mora and OTOTOY (Japan’s big download stores), Bandcamp, Qobuz, the iTunes Store and Amazon Japan.'),
+        h('li', h('b', 'Add the files. '), 'Saved songs > Add song files: choose any number of songs, videos or album ZIPs. Each is matched to its lesson by its tags (title, artist, length) and its name, copied into your media folder (or kept in this browser), and the lines are re-timed to fit it if its length differs from the video’s. Tracks without a lesson go into your media folder, ready to make lessons from.'),
+        h('li', h('b', 'Or just drop them in. '), 'Save downloads into your media folder: when you come back to the game, new songs (and album ZIPs) there attach to their lessons by themselves.'),
+        h('li', h('b', 'Word by word. '), 'With the song’s own file, the game listens to the singing and times every word (about 10–30 seconds, in the background). In Watch each word lights up as it is sung, and a word’s card has “In the song” to hear just that word. Not right on a line? “Tap the words”: the line plays slower and you tap as each word starts.'))));
     page.appendChild(h('section', h('h2', duo('話す', 'Talk: putting it into practice')),
       h('ul.plain',
         h('li', h('b', 'Choose a conversation. '), 'A scene (a café, a ramen shop, a convenience store, asking the way, meeting someone, weekend plans, anime), your own words from the garden, or a song from your library. Pick polite です/ます or casual speech.'),
@@ -23140,6 +24336,7 @@ async function boot(snap) {
     Voice.init(); Mic.init(); AI.init(); Kokoro.init().catch(e => console.warn('kokoro', e));
     // the media folder is looked at in the background after a short wait: a big or slow folder must not hold up the game
     step = 'folder';
+    Shelf.init().catch(e => console.warn('shelf', e));
     const folderDone = Folder.init().catch(e => console.warn('folder', e));
     await Promise.race([folderDone, sleep(2500)]);
     step = 'start';
