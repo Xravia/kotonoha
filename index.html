@@ -1092,6 +1092,21 @@ button.kcell:hover { border-color: var(--ai); }
 .th-slot:not(.has-media) .yt-wrap { visibility: hidden; }
 .find-facts .find-warn { color: var(--warn); font-weight: 600; }
 
+/* ---------- the local helper ---------- */
+.local-set .local-models { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.local-model { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; cursor: pointer; }
+.local-model.on { border-color: var(--ink); background: var(--surface); }
+.local-model span { display: flex; flex-direction: column; gap: 2px; }
+.local-model small { color: var(--ink-3); }
+.local-bar { display: flex; flex-direction: column; gap: 4px; }
+.check-out p { margin: 6px 0 0; }
+.check-out .check-2 b { color: var(--good); }
+.check-out .check-1 b { color: var(--warn); }
+.check-out .check-0 b { color: var(--bad); }
+.ask-row { display: flex; gap: 8px; }
+.ask-row input { flex: 1; min-width: 0; }
+.ask-out .answer { white-space: pre-wrap; margin-top: 8px; }
+
 </style>
 </head>
 <body>
@@ -11791,7 +11806,7 @@ button.kcell:hover { border-color: var(--ai); }
 比率	ひりつ	ratio, proportion, percentage	1	0
 </script>
 <script>
-window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-20","hosted":true,"web":"https://xravia.github.io/kotonoha/"};
+window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-24","hosted":true,"web":"https://xravia.github.io/kotonoha/"};
 </script>
 <script>
 /* ===== 00-util.js ===== */
@@ -14171,6 +14186,7 @@ const Analyzer = {
 };
 
 /* ===== 46-offline.js ===== */
+const LOCAL_SRC = 'the local helper';          // marks translations written by the helper on this device (61-local)
 /* ---------- 46-offline: loads the word splitter and dictionary that ship next to the game, and analyses stages with them ---------- */
 'use strict';
 
@@ -14263,6 +14279,7 @@ const Offline = {
       if (A) {
         const mine = old && Array.isArray(old.lines) ? old.lines.find(l => l.i === i) : null;
         if (mine && mine.my) A.my = mine.my;                        // the learner's own translation survives a re-analysis
+        if (mine && mine.deep === 'local') for (const k of ['en', 'enSrc', 'n', 'deep']) if (mine[k] != null) A[k] = mine[k];   // so does the helper's work
         lines.push(A);
       }
     }
@@ -14286,8 +14303,9 @@ const Offline = {
   withEnglish(m, doc) {
     for (const A of doc.lines) {
       const L = m.lines[A.i];
-      if (L && L.en && (!A.en || A.enSrc)) { A.en = L.en; A.enSrc = L.enSrc || 'the lyrics page'; }
-      else if (A.enSrc && !(L && L.en)) { delete A.en; delete A.enSrc; }
+      const fromPage = !!A.enSrc && A.enSrc !== LOCAL_SRC;          // the helper's own translations are kept
+      if (L && L.en && (!A.en || fromPage)) { A.en = L.en; A.enSrc = L.enSrc || 'the lyrics page'; }
+      else if (fromPage && !(L && L.en)) { delete A.en; delete A.enSrc; }
     }
     return doc;
   },
@@ -15159,21 +15177,29 @@ function browserDictation() {
 }
 
 /* ===== 60-ai.js ===== */
-/* ---------- 60-ai: line-by-line analysis, tutoring and grading by Claude ---------- */
+/* ---------- 60-ai: line-by-line analysis, tutoring and grading by Claude ----------
+   When Claude is not there, the same jobs go to the local helper (61-local), with prompts sized for a small model. */
 'use strict';
 
 const AI = {
   sample: null, off: false,
+  /** Who answers: Claude when this copy has Claude, otherwise the helper on this device once it is set up. */
+  provider() { return this.sample && !this.off ? 'claude' : Local.enabled() ? 'local' : null; },
+  local() { return this.provider() === 'local'; },
+  name() { return this.local() ? 'the helper' : 'Claude'; },
+  Name() { return this.local() ? 'The helper' : 'Claude'; },
+  s() { return this.local() ? Local.sampler() : this.sample; },
 
   async init() {
     const c = window.claude;
     if (c && typeof c.use === 'function') { try { this.sample = await c.use('sample'); } catch (e) { this.sample = null; } }
     Bus.emit('ai-ready');
   },
-  available() { return !!this.sample && !this.off; },
+  available() { return !!this.provider(); },
   tier() { const t = Game.p && Game.p.settings.tier; return (t === 'quick' || t === 'complex') ? t : 'default'; },
 
   errText(e) {
+    if (this.local() && e && !e.status) return 'The helper stopped: ' + String(e.message || e).slice(0, 160);
     const c = e && e.code;
     if (c === 'not_granted') return 'Claude is not allowed on this page. You can change that in the page’s Permissions menu, then reload.';
     if (c === 'rate_limited') return 'You have reached a usage limit for now. Try again a little later.';
@@ -15329,7 +15355,7 @@ const AI = {
       let d = null;
       try { d = await Lib.getStage(m, k); } catch (e) { d = null; }
       if (!d || !Array.isArray(d.lines)) continue;
-      for (const l of d.lines) { if (l.auto) continue; const jp = m.lines[l.i] && m.lines[l.i].jp; if (jp && !known.has(jp)) known.set(jp, l); }      // only Claude's own analyses are reused
+      for (const l of d.lines) { if (l.auto && !(l.deep === 'local' && this.local())) continue; const jp = m.lines[l.i] && m.lines[l.i].jp; if (jp && !known.has(jp)) known.set(jp, l); }      // only Claude's own analyses are reused
     }
     return known;
   },
@@ -15338,6 +15364,7 @@ const AI = {
    *  Returns {lines: Map, meta, missing: [], error}. Throws only when nothing usable came back. */
   async analyzeStage(m, n, o) {
     o = o || {};
+    if (this.local()) return this.localStage(m, n, o);
     const st = m.stages[n];
     const all = o.only || Array.from({ length: st.to - st.from + 1 }, (_, k) => st.from + k);
     const got = new Map(); let meta = null, pos = 0, error = null;
@@ -15370,7 +15397,7 @@ const AI = {
     };
     try {
       // a first try may replay an answer from the last hour (a reload mid-analysis costs nothing); a retry always asks afresh
-      const res = await this.sample(prompt, { onText: u => eat(u.text), signal: o.signal, modelTier: this.tier(), cache: o.fresh ? { gcTime: 3600000, refresh: true } : { gcTime: 3600000 } });
+      const res = await this.s()(prompt, { onText: u => eat(u.text), signal: o.signal, modelTier: this.tier(), cache: o.fresh ? { gcTime: 3600000, refresh: true } : { gcTime: 3600000 } });
       eat(res.text);
     } catch (e) {
       this._note(e);
@@ -15396,8 +15423,60 @@ const AI = {
       '- culture: 1-3 points of cultural background, social custom or pragmatics that matter for these lines. Only real and relevant points.',
       '- quiz: ' + nq + ' multiple-choice questions in English that test understanding of context, not vocabulary recall: what is implied, who is meant, tone and relationship, why a form or word was chosen, what a phrase signals socially. Exactly 4 options each, one clearly correct, the wrong ones plausible. Put the correct answer at a different position each time.'
     ].join('\n');
-    try { const r = await this.sample.json(prompt, { modelTier: this.tier(), cache: false }); return this.normalizeMeta(r && typeof r === 'object' ? r : {}, st); }
+    if (this.local()) {
+      const rows = []; for (let i = st.from; i <= st.to; i++) { const A = doc.lines.find(l => l.i === i); rows.push(m.lines[i].jp + (A && A.en ? ' = ' + A.en : '')); }
+      const r = await Local.sampler().json(Local.recapPrompt(m, rows), { max: 700 });
+      return this.normalizeMeta(r && typeof r === 'object' ? r : {}, st);
+    }
+    try { const r = await this.s().json(prompt, { modelTier: this.tier(), cache: false }); return this.normalizeMeta(r && typeof r === 'object' ? r : {}, st); }
     catch (e) { this._note(e); throw e; }
+  },
+  /** The helper's version of analyzeStage: the dictionary breakdown stays; the helper adds a natural translation and a
+      note to each line (a few lines at a time, to fit its short memory), then a recap with context questions. */
+  async localStage(m, n, o) {
+    const st = m.stages[n], sampler = Local.sampler();
+    const all = o.only || Array.from({ length: st.to - st.from + 1 }, (_, k) => st.from + k);
+    const base = await Offline.stage(m, n);
+    if (!base) throw new Error('the dictionary is not open yet, so there is nothing to add to. Wait for it, then try again.');
+    const got = new Map(), firstOf = new Map(), want = [];
+    for (const i of all) {
+      const jp = m.lines[i].jp, k = o.known && o.known.get(jp);
+      if (k && k.deep === 'local') { const c = deepClone(k); c.i = i; got.set(i, c); continue; }     // a chorus from an earlier stage: reuse it
+      if (firstOf.has(jp)) continue; firstOf.set(jp, i); want.push(i);
+    }
+    let error = null, meta = null;
+    const put = (i, x) => {
+      const b = base && base.lines.find(l => l.i === i); if (!b) return;
+      const c = deepClone(b);
+      const en = this._str(x.en); if (en && !(m.lines[i] && m.lines[i].en)) { c.en = en; c.enSrc = LOCAL_SRC; }   // a person's translation from the lyrics page stays first
+      const note = this._str(x.n); if (note) c.n = note;
+      c.deep = 'local';
+      got.set(i, c); if (o.onLine) o.onLine(c, got.size, all.length);
+    };
+    for (let k = 0; k < want.length; k += 6) {
+      const batch = want.slice(k, k + 6), refs = {};
+      for (const i of batch) { const L = m.lines[i]; if (L.en) refs[i] = L.en; }
+      try {
+        const r = await sampler.json(Local.deepenPrompt(m, batch, refs), { signal: o.signal, max: 110 * batch.length + 120 });
+        const arr = Array.isArray(r && r.lines) ? r.lines : Array.isArray(r) ? r : [];
+        arr.forEach((x, j) => { if (!x) return; let i = Number(x.i); if (batch.indexOf(i) === -1) i = batch[j]; if (i != null && !got.has(i)) put(i, x); });
+      } catch (e) { if (e && e.code === 'cancelled') throw e; error = e; }
+    }
+    for (const i of all) if (!got.has(i)) { const f = firstOf.get(m.lines[i].jp); if (f != null && got.has(f)) { const c = deepClone(got.get(f)); c.i = i; c.jp = m.lines[i].jp; got.set(i, c); } }
+    if (!got.size && error) throw error;
+    if (!o.only) {
+      try {
+        const rows = all.map(i => m.lines[i].jp + (got.get(i) && got.get(i).en ? ' = ' + got.get(i).en : ''));
+        const r = await sampler.json(Local.recapPrompt(m, rows), { signal: o.signal, max: 700 });
+        meta = this.normalizeMeta(r && typeof r === 'object' ? r : {}, st);
+      } catch (e) { if (e && e.code === 'cancelled') throw e; error = error || e; }
+    }
+    return { lines: got, meta, missing: all.filter(i => !got.has(i)), error };
+  },
+  /** Check the learner's own translation of a line. Returns {score 0-2, good, fix}. */
+  async checkMine(m, li, A, mine) {
+    const r = await this.s().json(Local.checkPrompt(m, li, A, mine), { modelTier: 'quick', cache: false, max: 260 });
+    return { score: clamp(Math.round(Number(r && r.score) || 0), 0, 2), good: this._str(r && r.good), fix: this._str(r && r.fix) };
   },
 
   /** A short tutoring answer about one line. Streams through o.onText(text). */
@@ -15416,7 +15495,7 @@ const AI = {
       'Answer in English in at most 120 words. Be concrete and specific to this line. Give Japanese examples with their reading in hiragana in parentheses where it helps. Plain text only: no markdown, no headings, no bullet symbols.'
     ].join('\n');
     try {
-      const res = await this.sample(prompt, { onText: u => { if (o.onText) o.onText(u.text); }, signal: o.signal, modelTier: 'default', cache: false });
+      const res = await this.s()(prompt, { onText: u => { if (o.onText) o.onText(u.text); }, signal: o.signal, modelTier: 'default', cache: false, max: 400 });
       return res.text;
     } catch (e) { this._note(e); throw e; }
   },
@@ -15430,7 +15509,7 @@ const AI = {
   async grade(m, transcript, question, answer) {
     const prompt = [
       'You are grading a comprehension answer in a Japanese-learning game. The learner studied this ' + this.typeText(m) + ' ("' + m.title + '"). Japanese lines, with a translation where one is available:',
-      transcript.slice(0, 60000),
+      transcript.slice(0, this.local() ? 2600 : 60000),
       '',
       'Question: ' + question,
       'Learner’s answer: """' + answer.slice(0, 2000) + '"""',
@@ -15440,10 +15519,239 @@ const AI = {
       'Reply with only a JSON object: {"score": <integer 0-5>, "good": "<one sentence: what they understood>", "missed": "<one sentence: the most important thing missing or wrong, or \\"\\" if nothing>", "model": "<a model answer in 2-3 sentences>"}'
     ].join('\n');
     try {
-      const r = await this.sample.json(prompt, { modelTier: 'default', cache: false });
+      const r = await this.s().json(prompt, { modelTier: 'default', cache: false, max: 500 });
       const score = clamp(Math.round(Number(r && r.score) || 0), 0, 5);
-      return { score, good: this._str(r && r.good), missed: this._str(r && r.missed), model: this._str(r && r.model) };
+      return { score, good: this._str(r && r.good), missed: this._str(r && r.missed), model: this._str(r && r.model), by: this.provider() };
     } catch (e) { this._note(e); throw e; }
+  }
+};
+
+/* ===== 61-local.js ===== */
+/* ---------- 61-local: a helper that runs on this device ----------
+   When Claude is not there (the folder copy, the phone app, or a Claude limit), a small open AI model running in the
+   browser on the device's graphics chip (WebGPU, through WebLLM) does Claude's jobs: natural translations and notes
+   for a stage, a recap with context questions, answers to questions about a line, grading a written answer, and
+   checking the learner's own translation. The model is downloaded once from Hugging Face and kept by the browser;
+   after that it works with no connection. It is far smaller than Claude, so everything it writes is labelled. */
+'use strict';
+
+const LOCAL_MODELS = [
+  { id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', name: 'Small', size: 0.9, vram: 1.6, note: 'quick; for phones and most computers' },
+  { id: 'gemma-2-2b-jpn-it-q4f16_1-MLC', name: 'Japanese-tuned', size: 1.5, vram: 1.9, note: 'Google’s Gemma 2 trained further on Japanese', noSystem: true },
+  { id: 'Qwen3-4B-q4f16_1-MLC', name: 'Large', size: 2.3, vram: 3.4, note: 'best answers; needs a computer with a good graphics card', think: true }
+];
+
+const Local = {
+  state: 'idle', progress: 0, text: '', engine: null, model: null, _gpu: null, _lib: null, _start: null, busy: 0,
+  /** This copy can use a local helper at all (not the claude.ai copy, whose frame blocks the downloads). */
+  allowed() { return BUILD.local && typeof window !== 'undefined'; },
+  _s: null,
+  settings() {
+    if (this._s) return this._s;
+    let v = null; try { v = JSON.parse(localStorage.getItem('kotonoha.localHelper') || 'null'); } catch (e) {}
+    this._s = v && typeof v === 'object' ? v : { on: false, model: '' };
+    return this._s;
+  },
+  saveSettings() { try { localStorage.setItem('kotonoha.localHelper', JSON.stringify(this.settings())); } catch (e) {} },
+  /** Set up once on this device (the model is in the browser's storage). */
+  enabled() { return this.allowed() && !!this.settings().on && !!this.settings().model; },
+  ready() { return this.state === 'ready' && !!this.engine; },
+  modelInfo(id) { return LOCAL_MODELS.find(m => m.id === (id || this.settings().model)) || LOCAL_MODELS[0]; },
+  /** Can this browser run it? {ok, why} */
+  async gpu() {
+    if (this._gpu) return this._gpu;
+    this._gpu = (async () => {
+      if (!this.allowed()) return { ok: false, why: 'Not in this copy: Claude does this here.' };
+      if (typeof navigator === 'undefined' || !navigator.gpu) return { ok: false, why: 'This browser has no WebGPU. Use Chrome or Edge on a computer, or Chrome on a recent Android phone.' };
+      try {
+        const ad = await navigator.gpu.requestAdapter();
+        if (!ad) return { ok: false, why: 'WebGPU is there, but no graphics chip was offered to it.' };
+        let f16 = false; try { f16 = ad.features.has('shader-f16'); } catch (e) {}
+        return { ok: true, f16, mobile: PhoneApp.mobile, maxBuf: (ad.limits && ad.limits.maxBufferSize) || 0 };
+      } catch (e) { return { ok: false, why: 'WebGPU could not start: ' + (e.message || e) }; }
+    })();
+    return this._gpu;
+  },
+  recommend(g) { return g && g.mobile ? LOCAL_MODELS[0].id : g && g.f16 === false ? LOCAL_MODELS[1].id : LOCAL_MODELS[2].id; },
+  /** Graphics chips without 16-bit maths (shader-f16) get the 32-bit build of the same model. */
+  async realId(id) {
+    id = id || this.settings().model;
+    const g = await this.gpu();
+    if (!g.ok || g.f16) return id;
+    const alt = id.replace('q4f16_1', 'q4f32_1');
+    try { const lib = await this.lib(); if (lib.prebuiltAppConfig.model_list.some(m => m.model_id === alt)) return alt; } catch (e) {}
+    return id;
+  },
+  /** The WebLLM library, shipped beside the game as data/webllm.js. */
+  async lib() {
+    if (window.webllm && window.webllm.CreateMLCEngine) return window.webllm;
+    if (!this._lib) this._lib = Offline._script(Offline.BASE + 'webllm.js').then(() => { if (!window.webllm) throw new Error('data/webllm.js did not load'); return window.webllm; });
+    return this._lib;
+  },
+  appConfig(lib) {
+    // a page opened from disk has no Cache API; IndexedDB works everywhere
+    const disk = location.protocol === 'file:';
+    return { model_list: lib.prebuiltAppConfig.model_list, cacheBackend: disk ? 'indexeddb' : 'cache' };
+  },
+  async downloaded(id) { try { const lib = await this.lib(); return await lib.hasModelInCache(await this.realId(id), this.appConfig(lib)); } catch (e) { return false; } },
+  _set(state, progress, text) { this.state = state; if (progress != null) this.progress = progress; if (text != null) this.text = text; Bus.emit('local', state); },
+  /** Download (first time) and load the model into the graphics chip. */
+  async start(id) {
+    id = id || this.settings().model;
+    if (this.engine && this.model === id) return this.engine;
+    if (this._start && this._startId === id) return this._start;
+    this._startId = id;
+    this._start = (async () => {
+      const g = await this.gpu(); if (!g.ok) { this._set('unsupported', 0, g.why); throw new Error(g.why); }
+      this._set('loading', 0, 'Opening the helper…');
+      try {
+        const lib = await this.lib();
+        if (this.engine) { try { await this.engine.unload(); } catch (e) {} this.engine = null; }
+        const engine = await lib.CreateMLCEngine(await this.realId(id), {
+          appConfig: this.appConfig(lib),
+          initProgressCallback: r => { const fetching = /fetch|download|cache\[/i.test(r.text || ''); this._set(fetching ? 'downloading' : 'loading', r.progress || 0, r.text || ''); }
+        });
+        this.engine = engine; this.model = id;
+        const s = this.settings(); s.on = true; s.model = id; this.saveSettings();
+        this._set('ready', 1, 'Ready');
+        return engine;
+      } catch (e) {
+        this.engine = null; this.model = null;
+        const msg = String(e && e.message || e);
+        this._set('error', 0, /Failed to store|Network response|Failed to fetch|NetworkError|net::/i.test(msg) ? 'The download did not work: huggingface.co could not be reached. Check the internet connection and try again; parts already downloaded are kept.'
+          : /memory|OOM|buffer|device lost|allocation/i.test(msg) ? 'Not enough graphics memory for this model. Try a smaller one.' : msg.slice(0, 200));
+        throw e;
+      } finally { this._start = null; }
+    })();
+    return this._start;
+  },
+  async stop() { if (this.engine) { try { await this.engine.unload(); } catch (e) {} } this.engine = null; this.model = null; this._set('idle', 0, ''); },
+  async remove(id) {
+    id = id || this.settings().model;
+    await this.stop();
+    try { const lib = await this.lib(); await lib.deleteModelAllInfoInCache(await this.realId(id), this.appConfig(lib)); } catch (e) { console.warn(e); }
+    const s = this.settings(); if (s.model === id) { s.on = false; } this.saveSettings(); Bus.emit('local', 'removed');
+  },
+  SYSTEM: 'You are a careful Japanese teacher inside a learning game. Answer in clear, simple English. Be accurate: if you are not sure, say so briefly rather than guessing. Never invent facts about people, songs or culture.',
+  /** One request. Same shape as Claude's sample(): o.onText({text}) while streaming, o.json for a JSON object. */
+  async complete(prompt, o) {
+    o = o || {};
+    const engine = await this.start();
+    const info = this.modelInfo(this.model);
+    const messages = info.noSystem ? [{ role: 'user', content: this.SYSTEM + '\n\n' + prompt }] : [{ role: 'system', content: this.SYSTEM }, { role: 'user', content: prompt }];
+    const req = { messages, temperature: o.json ? 0.2 : 0.4, top_p: 0.9, max_tokens: o.max || 900, stream: true };
+    if (o.json) req.response_format = { type: 'json_object' };
+    if (info.think) req.extra_body = { enable_thinking: false };
+    let text = '', stopped = false;
+    const onAbort = () => { stopped = true; try { engine.interruptGenerate(); } catch (e) {} };
+    if (o.signal) { if (o.signal.aborted) onAbort(); else o.signal.addEventListener('abort', onAbort, { once: true }); }
+    this.busy++; Bus.emit('local', 'busy');
+    try {
+      const stream = await engine.chat.completions.create(req);
+      for await (const chunk of stream) {
+        const d = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
+        if (d && d.content) { text += d.content; if (o.onText) o.onText({ text: this.clean(text) }); }
+      }
+    } finally {
+      this.busy--; Bus.emit('local', 'idle');
+      if (o.signal) o.signal.removeEventListener('abort', onAbort);
+    }
+    if (stopped) { const e = new Error('Stopped'); e.code = 'cancelled'; e.text = text; throw e; }
+    return { text: this.clean(text) };
+  },
+  /** Small models sometimes leave thinking tags or code fences around the answer. */
+  clean(t) { return String(t || '').replace(/<think>[\s\S]*?(<\/think>|$)/g, '').replace(/^\s*```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim(); },
+  parse(text) {
+    const t = this.clean(text);
+    try { return JSON.parse(t); } catch (e) {}
+    const a = t.indexOf('{'), z = t.lastIndexOf('}');
+    if (a !== -1 && z > a) { try { return JSON.parse(t.slice(a, z + 1)); } catch (e) {} }
+    throw new Error('The helper’s answer could not be read. Try again.');
+  },
+  /** Claude-shaped sampler, so AI.* can use the helper in Claude's place. */
+  sampler() {
+    if (this._sampler) return this._sampler;
+    const f = (prompt, o) => this.complete(prompt, o);
+    f.json = async (prompt, o) => this.parse((await this.complete(prompt, Object.assign({}, o, { json: true }))).text);
+    f.local = true;
+    this._sampler = f;
+    return f;
+  },
+
+  /** Settings: set up, switch or remove the helper. */
+  section() {
+    if (!this.allowed()) return null;
+    const box = h('section.local-set', h('h3', 'Local helper'),
+      h('p.fine', 'A small AI that runs on this device and does Claude’s jobs when Claude is not there: natural translations and notes for a stage, a recap with context questions, answers to your questions about a line, checking your own translations and grading written answers. It downloads once (from Hugging Face) and then works with no connection. It is far smaller than Claude, so it makes mistakes: use it as a study partner, not an authority.'));
+    const status = h('div.local-status'), pick = h('div.local-models'), acts = h('div.btn-row'), bar = h('div.local-bar');
+    box.append(status, pick, bar, acts);
+    let chosen = this.settings().model || '';
+    const draw = async () => {
+      const g = await this.gpu();
+      if (!box.isConnected && drawn) { off(); return; }
+      drawn = true;
+      clear(status); clear(pick); clear(acts); clear(bar);
+      if (!g.ok) { status.appendChild(h('p.notice', g.why)); return; }
+      if (!chosen) chosen = this.recommend(g);
+      const big = g.f16 === false ? 1.2 : 1;
+      const have = this.settings().on ? this.settings().model : '';
+      status.appendChild(h('p', this.ready() ? h('b', '✓ Ready: ' + this.modelInfo(this.model).name + ' model, running on this device.')
+        : have ? h('span', 'Set up with the ' + this.modelInfo(have).name + ' model. It starts the first time you use it (it takes a few seconds).') : h('span', 'Not set up on this device yet.')));
+      LOCAL_MODELS.forEach(mo => pick.appendChild(h('label.local-model' + (chosen === mo.id ? '.on' : ''),
+        h('input', { type: 'radio', name: 'local-model', value: mo.id, checked: chosen === mo.id, onchange: () => { chosen = mo.id; draw(); } }),
+        h('span', h('b', mo.name + (mo.id === this.recommend(g) ? ' (suggested here)' : '')), h('small', ' ' + (mo.size * big).toFixed(1) + ' GB download · ' + mo.note)))));
+      if (g.f16 === false) pick.appendChild(h('p.fine', 'This graphics chip has no 16-bit maths, so the helper uses the slightly larger 32-bit build of each model.'));
+      if (this.state === 'downloading' || this.state === 'loading') {
+        bar.append(meter(this.progress || 0.02), h('p.fine', (this.state === 'downloading' ? 'Downloading: ' : 'Starting: ') + Math.round((this.progress || 0) * 100) + '%. You can keep using the game.'));
+      } else if (this.state === 'error') bar.appendChild(h('p.notice.bad', this.text));
+      const same = have === chosen;
+      acts.appendChild(btn(same ? (this.ready() ? 'Restart it' : 'Start it now') : have ? 'Switch to this model' : 'Set up the helper (' + this.modelInfo(chosen).size + ' GB)', { cls: 'small primary', icon: 'download',
+        disabled: this.state === 'downloading' || this.state === 'loading',
+        onclick: async () => { if (same && this.ready()) await this.stop(); this.start(chosen).then(() => toast('The helper is ready.', 'good')).catch(() => {}); draw(); } }));
+      if (have) acts.appendChild(btn('Remove the download', { cls: 'small ghost', icon: 'trash', onclick: async () => { await this.remove(have); toast('The helper’s download was removed.'); draw(); } }));
+      if (have && this.ready()) acts.appendChild(btn('Stop it (frees graphics memory)', { cls: 'small ghost', onclick: async () => { await this.stop(); draw(); } }));
+    };
+    let drawn = false, last = 0;
+    const off = Bus.on('local', () => { if (!box.isConnected) { if (drawn) off(); return; } const t = Date.now(); if (t - last > 400 || this.state === 'ready' || this.state === 'error') { last = t; draw(); } });
+    draw();
+    return box;
+  },
+
+  /* ---------- prompts sized for a small model with a 4,096-token window ---------- */
+  /** Translations and notes for a stage's lines (the word breakdown stays the dictionary's). */
+  deepenPrompt(m, lines, refs) {
+    return [
+      'These numbered lines are from the ' + AI.typeText(m) + ' "' + m.title + '"' + (m.artist ? ' by ' + m.artist : '') + '. The learner is ' + AI.levelText(),
+      '',
+      lines.map(i => '[' + i + '] ' + m.lines[i].jp + (refs[i] ? '\n    (a fan translation, may be loose: ' + refs[i] + ')' : '')).join('\n'),
+      '',
+      'For EVERY numbered line give:',
+      '- "en": a natural English translation of that line.',
+      '- "n": one or two short sentences on what a learner needs beyond the words: what is left unsaid (who, what), the tone or feeling, the speech style, or slang. Use "" if there is nothing useful.',
+      'Reply with one JSON object only, exactly like: {"lines":[{"i":' + lines[0] + ',"en":"...","n":"..."}]}'
+    ].join('\n');
+  },
+  recapPrompt(m, rows) {
+    return [
+      'A learner has just studied these lines from the ' + AI.typeText(m) + ' "' + m.title + '" (Japanese = English):',
+      rows.join('\n'),
+      '',
+      'Write a recap. Reply with one JSON object only:',
+      '{"sum":"2 sentences: what these lines express","quiz":[{"q":"a question in English about meaning, feeling or what is implied","o":["option","option","option","option"],"a":0,"x":"one sentence: why"}]}',
+      'Give 2 or 3 quiz questions. Each has exactly 4 options and exactly one right answer; "a" is the index (0-3) of the right one. Do not ask about word meanings alone.'
+    ].join('\n');
+  },
+  checkPrompt(m, li, A, mine) {
+    return [
+      'Japanese line from the ' + AI.typeText(m) + ' "' + m.title + '":',
+      '「' + m.lines[li].jp + '」',
+      A && A.en ? 'A reference translation (may be loose): ' + A.en : '',
+      'The learner translated it as: "' + String(mine).slice(0, 400) + '"',
+      '',
+      'Judge only the meaning, not the English style. Reply with one JSON object only:',
+      '{"score":2,"good":"one short sentence on what they got right","fix":"one short sentence on the most important thing missed or wrong, or \\"\\""}',
+      'score: 2 = the meaning is right, 1 = partly right, 0 = wrong or unrelated.'
+    ].filter(Boolean).join('\n');
   }
 };
 
@@ -15933,6 +16241,7 @@ function openSettings() {
     h('section', h('h3', 'Analysis'),
       field('Claude model for line analysis', 'Fast is quicker and uses less of your Claude allowance; Deep is slowest.', select('set-tier', 'tier', [['quick', 'Fast'], ['default', 'Balanced'], ['complex', 'Deep']])),
       field('Lines per stage', 'For lessons you add from now on.', select('set-stage', 'stageSize', [[0, 'Automatic'], [5, '5'], [6, '6'], [8, '8'], [10, '10'], [12, '12']], Number))),
+    Local.allowed() ? Local.section() : null,
     h('section', h('h3', 'Voice'),
       field('Voice', Voice.available() ? 'Used for words, and for lines that have no audio clip.' : 'No Japanese voice is available in this view.', select('set-voice', 'voice', voiceOpts)),
       Voice.voices.length ? field('Browser voice', null, select('set-voiceuri', 'voiceURI', [['', 'Default']].concat(Voice.voices.map(v => [v.voiceURI, v.name])))) : null,
@@ -16652,7 +16961,10 @@ Views.media = {
       h('div.tool-row',
         h('div', h('h3', duo('通し聴き', 'Listen through')), h('p.sub', 'Play everything without stopping, text hidden. The honest test of what your ears can do.' + (m.through && m.through.last != null ? ' Last time you followed about ' + m.through.last + '%.' : ''))),
         btn('Listen', { icon: 'ear', onclick: () => App.go('through', { id: m.id }) })),
-      AI.available() && m.stages.some(s => !s.st) ? h('div.tool-row',
+      AI.local() ? h('div.tool-row',
+        h('div', h('h3', duo('助手', 'The helper on every stage')), h('p.sub', 'The helper on this device adds a natural translation and a note to every line, and a recap with context questions, to each stage that does not have them yet. Roughly a minute a stage; you can stop at any time.')),
+        btn('Start', { onclick: () => this.prepareAll(m) }))
+      : AI.available() && m.stages.some(s => !s.st) ? h('div.tool-row',
         h('div', h('h3', 'Prepare all stages'), h('p.sub', 'Analyse the remaining ' + plural(m.stages.filter(s => !s.st).length, 'stage') + ' now, one after another, so nothing has to load later.')),
         btn('Prepare', { onclick: () => this.prepareAll(m) })) : null,
       h('div.tool-row',
@@ -16709,23 +17021,38 @@ Views.media = {
   },
   /** Analyse every remaining stage in order. Started by the learner, shows progress, can be stopped. */
   prepareAll(m) {
-    const todo = m.stages.map((s, n) => n).filter(n => !m.stages[n].st);
-    const ctl = new AbortController(); let stopped = false, close;
+    const local = AI.local();
+    const ctl = new AbortController(); let stopped = false, close, offL = null;
     const status = h('p', 'Starting…'), bar = meter(0, 'big');
-    close = openModal({ title: 'Preparing stages', body: [status, bar, h('p.fine', 'Each stage is one request to Claude on your account. You can stop at any time; finished stages are kept.'),
-      h('div.btn-row.end', btn('Stop', { onclick: () => { stopped = true; ctl.abort(); close(); } }))], onClose: () => { stopped = true; try { ctl.abort(); } catch (e) {} App.refresh(); } });
+    close = openModal({ title: local ? 'The helper is reading the lesson' : 'Preparing stages', body: [status, bar,
+      h('p.fine', local ? 'The helper on this device reads one stage at a time. You can stop at any time; finished stages are kept.' : 'Each stage is one request to Claude on your account. You can stop at any time; finished stages are kept.'),
+      h('div.btn-row.end', btn('Stop', { onclick: () => { stopped = true; ctl.abort(); close(); } }))], onClose: () => { stopped = true; try { ctl.abort(); } catch (e) {} if (offL) offL(); App.refresh(); } });
+    if (local) offL = Bus.on('local', () => { if (!stopped && (Local.state === 'downloading' || Local.state === 'loading')) status.textContent = (Local.state === 'downloading' ? 'Downloading the helper' : 'Starting the helper') + ' (' + Math.round(Local.progress * 100) + '%)…'; });
     (async () => {
+      let todo = m.stages.map((s, n) => n).filter(n => !m.stages[n].st);
+      if (local) {
+        // the helper adds to the dictionary's breakdown: every stage still without its translations, notes or recap
+        todo = [];
+        for (let n = 0; n < m.stages.length; n++) { const d = await Offline.stage(m, n); if (!d || !d.sum || d.lines.some(l => l.auto && l.deep !== 'local')) todo.push(n); }
+        if (!todo.length) { status.textContent = 'Every stage already has the helper’s translations and recap.'; bar.firstChild.style.width = '100%'; setTimeout(() => close(), 1400); return; }
+      }
       let done = 0;
       for (const n of todo) {
         if (stopped) break;
         status.textContent = 'Stage ' + (n + 1) + ' of ' + m.stages.length + '…';
         try {
           const r = await AI.analyzeStage(m, n, { signal: ctl.signal, known: await AI.knownLines(m, n) });
+          if (stopped) break;
           if (r.lines.size) {
-            const st = m.stages[n];
-            const lines = []; for (let i = st.from; i <= st.to; i++) if (r.lines.has(i)) lines.push(r.lines.get(i));
-            const meta = r.meta || { sum: '', culture: [], quiz: [] };
-            await Lib.saveStage(m, n, { lines, sum: meta.sum, culture: meta.culture, quiz: meta.quiz });
+            const st = m.stages[n], old = (await Lib.getStage(m, n)) || { lines: [] }, lines = [];
+            for (let i = st.from; i <= st.to; i++) {
+              const c = r.lines.get(i), o = old.lines.find(l => l.i === i);
+              if (c) { if (o && o.my) c.my = o.my; lines.push(c); } else if (o) lines.push(o);
+            }
+            const meta = r.meta || {};
+            const doc = { lines, sum: meta.sum || old.sum || '', culture: meta.culture || old.culture || [], quiz: meta.quiz || old.quiz || [] };
+            if (lines.some(l => l.auto)) doc.auto = Offline.VERSION;
+            await Lib.saveStage(m, n, doc);
           }
           if (r.error) { status.textContent = AI.errText(r.error); break; }
         } catch (e) { if (!stopped) status.textContent = AI.errText(e); break; }
@@ -16971,7 +17298,7 @@ Views.study = {
         h('div.btn-row', got ? btn('Start with what is ready', { cls: 'primary', onclick: () => this.enter() }) : null, btn('Stop', { cls: 'ghost', onclick: () => { if (S.ctl) S.ctl.abort(); } })));
     } else if (Offline.state === 'loading') {
       kids.push(h('div.analysing', meter(Offline.pct / 100, 'big'), h('p', Offline.note)), h('p.fine', 'The dictionary opens once each time the game starts. Then every line is broken down instantly on your computer.'));
-    } else if (AI.available()) {
+    } else if (AI.provider() === 'claude') {
       if (S.err) kids.push(notice('bad', S.err));
       kids.push(h('div.btn-row', btn(S.err ? 'Try again' : 'Analyse these lines', { cls: 'primary', onclick: () => this.analyse() })),
         h('p.fine', 'Takes about a minute and uses your own Claude account. The result is saved, so this happens once per stage.'));
@@ -17093,7 +17420,7 @@ Views.study = {
           A ? h('span.fine', 'Tap any word') : null)));
       if (!A) {
         kids.push(S.analysing ? notice('', 'Still analysing this line…')
-          : notice('', 'This line has no breakdown yet. Tap a kanji to look it up.', AI.available() ? btn('Analyse missing lines', { cls: 'small', onclick: () => this.analyse(this.missing()) }) : null));
+          : notice('', 'This line has no breakdown yet. Tap a kanji to look it up.', AI.provider() === 'claude' ? btn('Analyse missing lines', { cls: 'small', onclick: () => this.analyse(this.missing()) }) : null));
       } else {
         // meaning: guess first
         if (!S.meaning.has(li)) kids.push(h('div.meaning.closed', h('span', 'Guess the meaning before you look.'), btn('Show meaning', { cls: 'small', title: 'M', onclick: () => { S.meaning.add(li); this.draw(); } })));
@@ -17200,14 +17527,15 @@ Views.study = {
       const q = input.value.trim(); if (!q || busy) return;
       busy = true; send.disabled = true;
       S.askCtl = new AbortController();
-      mount(out, h('p.sub', 'Thinking…'));
-      try { await AI.ask(S.m, li, A, q, { signal: S.askCtl.signal, onText: t => { mount(out, h('p.answer', t)); } }); Game.addXp(1, 'ask'); }
+      mount(out, h('p.sub', AI.local() && !Local.ready() ? 'Starting the helper…' : 'Thinking…'));
+      try { await AI.ask(S.m, li, A, q, { signal: S.askCtl.signal, onText: t => { mount(out, h('p.answer', t)); } }); Game.addXp(1, 'ask');
+        if (AI.local()) out.appendChild(h('p.fine', 'From the helper on this device: it can be wrong.')); }
       catch (e) { if (!(e && e.code === 'cancelled')) mount(out, h('p.sub', AI.errText(e))); }
       busy = false; send.disabled = false; S.askCtl = null;
     };
     const send = btn('Ask', { cls: 'small', onclick: go });
     input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
-    return h('section.block', h('h3', duo('質問', 'Ask about this line')), h('div.ask-row', h('label.visually-hidden', { for: 'ask-in' }, 'Your question'), input, send), out);
+    return h('section.block', h('h3', duo('質問', 'Ask ' + AI.name() + ' about this line')), h('div.ask-row', h('label.visually-hidden', { for: 'ask-in' }, 'Your question'), input, send), out);
   },
   commitLine(li) {
     const S = this.S, A = this.A(li);
@@ -17369,6 +17697,7 @@ Views.theater = {
     root.appendChild(page);
     this.T.offs.push(Bus.on('offline', st => { if (this.T === T && st === 'ready') this.loadDocs(); else if (this.T === T) this.drawPanel(); }));
     this.T.offs.push(Bus.on('player', () => { if (this.T === T) this.drawCtl(); }));
+    this.T.offs.push(Bus.on('local', () => { if (this.T !== T || T.deepening == null) return; const b = $('.deepen-run b'); if (b && Local.state !== 'ready') b.textContent = AI.Name() + ' is reading stage ' + (T.deepening + 1) + '… ' + (Local.state === 'downloading' ? 'Downloading the helper' : 'Starting the helper') + ' (' + Math.round(Local.progress * 100) + '%)… '; }));
     this.T.offs.push(Bus.on('player-error', id => { if (this.T === T && id === T.m.id) { this.drawScreen(); this.drawCtl(); } }));
     this.T.offs.push(Bus.on('folder', () => { if (this.T === T && !Player.has(m.id)) this.attachMedia(); }));
     this._ended = () => { if (this.T === T) this.onEnded(); };
@@ -17739,7 +18068,7 @@ Views.theater = {
   },
   analysisNote() {
     if (Offline.state === 'loading') return h('div.th-wait-dict', meter(Offline.pct / 100), h('p.sub', Offline.note + ' This happens once each time the game opens.'));
-    if (AI.available()) return notice('', 'This stage has not been analysed yet. ', btn('Analyse every stage with Claude', { cls: 'small primary', onclick: () => Views.media.prepareAll(this.T.m) }));
+    if (AI.provider() === 'claude') return notice('', 'This stage has not been analysed yet. ', btn('Analyse every stage with Claude', { cls: 'small primary', onclick: () => Views.media.prepareAll(this.T.m) }));
     if (Offline.state === 'missing' || Offline.state === 'error') return notice('bad', Offline.label());
     return notice('', 'The word breakdown is not available in this copy of the game. Open the folder version (Kotonoha.html) to analyse lines on your computer.');
   },
@@ -17829,9 +18158,26 @@ Views.theater = {
     mean.appendChild(my);
     if (A.en && !shown) mean.appendChild(h('div.btn-row', btn('Compare with a translation', { cls: 'small ghost', icon: 'eye', onclick: () => { if (my.value.trim()) this.saveMy(li, my.value); T.learn.trShown.add(li); this.drawPanel(); } }),
       h('span.fine', 'Try your own first, then compare.')));
+    if (AI.available()) {
+      const verdict = h('div.check-out');
+      const check = btn('Check my translation', { cls: 'small', icon: 'check', onclick: async () => {
+        const mine = my.value.trim(); if (!mine) { toast('Write your translation first.'); try { my.focus(); } catch (e) {} return; }
+        this.saveMy(li, mine); check.disabled = true;
+        mount(verdict, h('p.sub', AI.local() && Local.state !== 'ready' ? 'Starting the helper…' : 'Checking…'));
+        try {
+          const r = await AI.checkMine(T.m, li, A, mine);
+          mount(verdict, h('p.check-' + r.score, h('b', ['Not quite. ', 'Partly right. ', 'Right! '][r.score]), r.good ? r.good + ' ' : '', r.fix ? h('span', r.fix) : null),
+            AI.local() ? h('p.fine', 'Checked by the helper on this device: it can be wrong.') : null);
+          Game.addXp(r.score === 2 ? 2 : 1, 'check');
+        } catch (e) { mount(verdict, h('p.sub', AI.errText(e))); }
+        check.disabled = false;
+      } });
+      mean.append(h('div.btn-row', check), verdict);
+    }
     const reg = A.r && REGISTER_NOTE[A.r] ? chip(REGISTER_NOTE[A.r], 'reg reg-' + A.r) : null;
     kids.push(h('section.block', h('h3', duo('意味', 'Meaning'), reg), mean));
-    if (AI.available() && A.auto) kids.push(this.deepenBlock(n));
+    if (AI.available() && A.auto && !A.deep) kids.push(this.deepenBlock(n));
+    if (AI.available()) kids.push(this.askBlock(li, A));
     // the words
     kids.push(h('section.block', h('h3', duo('言葉', 'Words'), h('small.fine', ' ticked words go into your garden when you move on')), this.wordRows(li, A)));
     if (A.g && A.g.length) kids.push(h('section.block', h('h3', duo('文法', 'Grammar')), h('div.th-grams', A.g.map(g => h('div.th-gram',
@@ -17845,12 +18191,36 @@ Views.theater = {
       h('span.fine', 'Enter')));
     return kids;
   },
-  /** In the online version: Claude can add natural translations, context notes and questions to a stage analysed offline. */
+  /** Claude (online) or the helper on this device can add natural translations, notes and context questions to a stage
+      broken down with the dictionary. */
   deepenBlock(n) {
-    const T = this.T;
-    if (T.deepening === n) return h('div.notice', h('b', 'Claude is reading stage ' + (n + 1) + '… '), 'Translations and notes appear here when ready.', btn('Stop', { cls: 'small ghost', onclick: () => { if (T.deepCtl) T.deepCtl.abort(); } }));
-    return h('div.notice', 'Broken down on this computer. ', h('b', 'Claude can add a natural translation, notes on context and culture, and context questions for this stage.'),
-      btn('Ask Claude', { cls: 'small', onclick: () => this.deepen(n) }));
+    const T = this.T, local = AI.local();
+    if (T.deepening === n) {
+      const lt = local && Local.state !== 'ready' ? ' ' + (Local.state === 'downloading' ? 'Downloading the helper' : 'Starting the helper') + ' (' + Math.round(Local.progress * 100) + '%)…' : '';
+      return h('div.notice.deepen-run', h('b', AI.Name() + ' is reading stage ' + (n + 1) + '…' + lt + ' '), 'Translations and notes appear here when ready.', btn('Stop', { cls: 'small ghost', onclick: () => { if (T.deepCtl) T.deepCtl.abort(); } }));
+    }
+    return h('div.notice', 'Broken down on this ' + (PhoneApp.mobile ? 'phone' : 'computer') + '. ',
+      h('b', local ? 'The helper on this device can add a natural translation and a note to each line, and a recap with context questions.' : 'Claude can add a natural translation, notes on context and culture, and context questions for this stage.'),
+      local ? h('span.fine', ' It is a small AI: check what it says against the dictionary.') : null,
+      btn(local ? 'Ask the helper' : 'Ask Claude', { cls: 'small', onclick: () => this.deepen(n) }));
+  },
+  /** Ask Claude or the helper about the line. */
+  askBlock(li, A) {
+    const T = this.T, out = h('div.ask-out');
+    const input = h('input', { type: 'text', id: 'th-ask-in', placeholder: 'e.g. Why is it が here and not は?', maxlength: 300, autocomplete: 'off' });
+    let busy = false;
+    const go = async () => {
+      const q = input.value.trim(); if (!q || busy) return;
+      busy = true; send.disabled = true; T.askCtl = new AbortController();
+      mount(out, h('p.sub', AI.local() && Local.state !== 'ready' ? 'Starting the helper…' : 'Thinking…'));
+      try { await AI.ask(T.m, li, A, q, { signal: T.askCtl.signal, onText: t => { mount(out, h('p.answer', t)); } }); Game.addXp(1, 'ask');
+        if (AI.local()) out.appendChild(h('p.fine', 'From the helper on this device: it can be wrong.')); }
+      catch (e) { if (!(e && e.code === 'cancelled')) mount(out, h('p.sub', AI.errText(e))); }
+      busy = false; send.disabled = false; T.askCtl = null;
+    };
+    const send = btn('Ask', { cls: 'small', onclick: go });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } });
+    return h('section.block', h('h3', duo('質問', 'Ask ' + AI.name() + ' about this line')), h('div.ask-row', h('label.visually-hidden', { for: 'th-ask-in' }, 'Your question'), input, send), out);
   },
   async deepen(n) {
     const T = this.T, m = T.m;
@@ -18642,7 +19012,7 @@ Views.test = {
       const status = h('p.sub');
       const send = btn('Submit for grading', { cls: 'primary', onclick: async () => {
         const a = ta.value.trim(); if (a.length < 8) { status.textContent = 'Write a sentence or two first.'; return; }
-        send.disabled = true; skip.disabled = true; ta.disabled = true; status.textContent = 'Claude is reading your answer…';
+        send.disabled = true; skip.disabled = true; ta.disabled = true; status.textContent = AI.local() && !Local.ready() ? 'Starting the helper, then it reads your answer…' : AI.Name() + ' is reading your answer…';
         const transcript = T.m.lines.map((l, i) => { const d = T.docs.find(x => x && x.lines.some(y => y.i === i)); const A = d ? d.lines.find(y => y.i === i) : null; return (i + 1) + '. ' + l.jp + (A && A.en ? '  = ' + A.en : ''); }).join('\n');
         try { const g = await AI.grade(T.m, transcript, q.prompt, a); status.textContent = ''; done(g.score >= 3, { pts: g.score / 5, grade: g }); }
         catch (e) { status.textContent = AI.errText(e) + ' This question will not be counted.'; q.done = true; q.skipped = true; mount(fb, h('div.btn-row', btn('Continue', { cls: 'primary next-btn', onclick: () => this.next() }))); }
@@ -18661,7 +19031,8 @@ Views.test = {
     if (q.word && q.type === 'mcq') kids.push(h('p', h('span.jp', { lang: 'ja' }, (q.word.d || q.word.s) + (q.word.r ? '（' + Srs.dictReading(q.word) + '）' : '')), ' · ' + q.word.g));
     if (q.type === 'open' && extra && extra.grade) {
       const g = extra.grade;
-      kids.push(h('p.grade', h('b', g.score + ' / 5')), g.good ? h('p', h('span.tag', 'understood'), g.good) : null, g.missed ? h('p', h('span.tag', 'missing'), g.missed) : null, g.model ? h('p', h('span.tag', 'model answer'), g.model) : null);
+      kids.push(h('p.grade', h('b', g.score + ' / 5')), g.good ? h('p', h('span.tag', 'understood'), g.good) : null, g.missed ? h('p', h('span.tag', 'missing'), g.missed) : null, g.model ? h('p', h('span.tag', 'model answer'), g.model) : null,
+        g.by === 'local' ? h('p.fine', 'Graded by the helper on this device. It is a small AI and can be wrong.') : null);
     }
     if (q.explain) kids.push(h('p.explain', q.explain));
     if (q.li != null && q.type !== 'open') {
@@ -19831,6 +20202,12 @@ Views.guide = {
         h('li', h('b', 'Translations as practice. '), 'In Learn, the translation stays hidden until you have tried your own. Play gains a Line meaning game, and tests ask what whole lines mean.'),
         h('li', h('b', 'Your own songs too. '), 'On a lesson’s map, Tools > English translation finds the song and adds its translation to the lines you already have.'),
         h('li', h('b', 'Where it works. '), 'Searching needs a connection. Music videos play in the web and phone version' + (BUILD.web ? ' (' + BUILD.web + ')' : '') + '; the copy opened from disk plays your own files.'))));
+    if (Local.allowed()) page.appendChild(h('section', h('h2', duo('助手', 'The helper on this device')),
+      h('ul.plain',
+        h('li', h('b', 'What it does. '), 'When Claude is not there, a small AI running on this device does Claude’s jobs: a natural translation and a note for each line, a recap with context questions for each stage, answers to your questions about a line, a verdict on your own translation, and grading of the written answer in the final test.'),
+        h('li', h('b', 'Set it up once. '), 'Settings > Local helper: pick a model and press Set up. It downloads once (about 1 to 2.5 GB, from Hugging Face) and then works with no connection. It needs WebGPU: Chrome or Edge on a computer, or Chrome on a recent Android phone.'),
+        h('li', h('b', 'Use it. '), 'In Learn: Ask the helper on a stage, Check my translation under your own, or ask about the line. On a lesson’s map, Tools > The helper on every stage does a whole song in one go. Lines that repeat are done once.'),
+        h('li', h('b', 'Trust it like a classmate. '), 'It is far smaller than Claude and makes mistakes, more so with poetic lines. Everything it writes is labelled, its translation waits until you have tried your own, and a person’s translation from the lyrics page stays first.'))));
     if (BUILD.hosted) page.appendChild(h('section', h('h2', duo('スマホ', 'On your phone')),
       h('ul.plain',
         h('li', h('b', 'Install it. '), 'In Chrome, open the menu (⋮) and choose Install app (or Add to Home screen). Kotonoha gets its own icon, opens full screen and works with no connection.'),
@@ -19855,6 +20232,7 @@ Views.guide = {
         h('li', 'JLPT word lists: compiled by Jonathan Waller (tanos.co.uk), CC BY, via the open-anki-jlpt-decks project.'),
         h('li', 'Stroke order and the parts of each character: ', link('https://kanjivg.tagaini.net', 'KanjiVG'), ', © Ulrich Apel, used under CC BY-SA 3.0.'),
         h('li', '春が来た: words by Takano Tatsuyuki, 1910, public domain. The ramen-shop scene was written for this game.'),
+        Local.allowed() ? h('li', 'The local helper runs on ', link('https://github.com/mlc-ai/web-llm', 'WebLLM'), ' (MLC AI, Apache 2.0) with an open model downloaded when you set it up: Qwen2.5 or Qwen3 (Alibaba Cloud, Apache 2.0), or Gemma 2 (Google, Gemma Terms of Use).') : null,
         BUILD.local ? h('li', 'Word meanings: JMdict, © the Electronic Dictionary Research and Development Group, CC BY-SA 4.0. Word splitting: kuromoji.js (Apache 2.0) with IPADIC (© NAIST). Details in data/LICENSES.txt.') : null,
         h('li', BUILD.local ? 'The offline breakdown is worked out by rules and a dictionary and can pick the wrong sense of a word, especially in poetic lyrics. When something looks off, tap the word to see every meaning.' : 'Line analysis, tutoring answers and grading are generated by Claude and can contain mistakes. When something looks off, check a dictionary.'))));
     root.appendChild(page);

@@ -14,3 +14,7 @@ JLPT word lists: compiled by Jonathan Waller (tanos.co.uk), Creative Commons Att
 
 KanjiVG (stroke order and the parts of each character), © Ulrich Apel, Creative Commons Attribution-ShareAlike 3.0.
   https://kanjivg.tagaini.net  The compact copy in strokes.js is derived from KanjiVG and is shared under the same licence.
+
+WebLLM (the local helper's engine, webllm.js), MLC AI, Apache License 2.0. https://github.com/mlc-ai/web-llm
+  The helper's models are downloaded from Hugging Face when you set it up, under their own terms:
+  Qwen2.5 and Qwen3 (Alibaba Cloud, Apache 2.0) and Gemma 2 (Google, Gemma Terms of Use).
