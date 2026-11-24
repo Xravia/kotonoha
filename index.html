@@ -15678,7 +15678,7 @@ const AI = {
 'use strict';
 
 const LOCAL_MODELS = [
-  { id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', name: 'Small', size: 0.9, vram: 1.6, note: 'quick; for phones and most computers' },
+  { id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', name: 'Small', size: 0.9, vram: 1.6, note: 'quick, for phones; in Talk it only chats (its corrections were too often wrong)' },
   { id: 'gemma-2-2b-jpn-it-q4f16_1-MLC', name: 'Japanese-tuned', size: 1.5, vram: 1.9, note: 'Google’s Gemma 2 trained further on Japanese', noSystem: true },
   { id: 'Qwen3-4B-q4f16_1-MLC', name: 'Large', size: 2.3, vram: 3.4, note: 'best answers; needs a computer with a good graphics card', think: true }
 ];
@@ -15781,13 +15781,15 @@ const Local = {
   /** Shapes of the JSON answers. */
   SCHEMA: (() => {
     const s = { type: 'string' }, n = { type: 'integer' }, obj = p => ({ type: 'object', properties: p, required: Object.keys(p) });
+    // translations must come out in English: small models otherwise drift into Chinese
+    const en = { type: 'string', pattern: '^[ -~\\u00C0-\\u024F\\u2018-\\u201D\\u2026\\u2013\\u2014]*$' };
     return {
       any: { type: 'object' },
-      deepen: obj({ lines: { type: 'array', items: obj({ i: n, en: s, n: s }) } }),
+      deepen: obj({ lines: { type: 'array', items: obj({ i: n, en, n: s }) } }),
       recap: obj({ sum: s, quiz: { type: 'array', items: obj({ q: s, o: { type: 'array', items: s }, a: n, x: s }) } }),
       check: obj({ score: n, good: s, fix: s }),
       grade: obj({ score: n, good: s, missed: s, model: s }),
-      line: obj({ ja: s, en: s }),
+      line: obj({ ja: s, en }),
       ja: obj({ ja: s }),
       why: obj({ why: s })
     };
@@ -16012,7 +16014,7 @@ const Talk = {
     const rows = [];
     for (const t of s.turns.slice(-(max || 8))) {
       if (t.who === 'k') rows.push('Kotohana: ' + t.ja);
-      else if (!t.say) rows.push('Learner: ' + t.text);
+      else if (!t.say) rows.push('Learner: ' + (t.ja && !t.nat ? t.ja : t.text));
     }
     return rows.join('\n').slice(-1400);
   },
@@ -16022,12 +16024,13 @@ const Talk = {
       '',
       'Write Kotohana’s next line in ' + this.styleText(s) + ': one or two short sentences with simple words, ending with one easy question the learner can answer. No romaji.' +
         (s.topic === 'words' && s.targets.length ? ' Where it fits naturally, use one of the learner’s words or ask something that invites it.' : ''),
-      'Reply with a JSON object: "ja" is Kotohana’s line in Japanese and "en" is its English translation.']).join('\n');
+      'Reply with a JSON object: "ja" is Kotohana’s line in Japanese and "en" is its translation into English.']).join('\n');
   },
+  /** Small models rewrite correct sentences unless shown that copying is right: examples, and "change as little as possible". */
   recastPrompt(s, text) {
-    return ['In a Japanese conversation (' + this.scene(s).en.toLowerCase() + '), a learner wrote:', '「' + text + '」',
-      'Write how a native speaker would naturally say the same thing, in ' + this.styleText(s) + '. Keep the meaning and keep it simple. If it is already natural, write it unchanged.',
-      'Reply with a JSON object: "ja" is the natural Japanese.'].join('\n');
+    return ['A learner of Japanese wrote a sentence in a conversation (' + this.scene(s).en.toLowerCase() + '). Rewrite it the way a native speaker would, changing as little as possible: fix only real mistakes (a wrong verb form, particle or word) and keep the meaning. If nothing is wrong, copy it exactly. Keep hiragana as hiragana.',
+      'Examples:', '「みずをください」 → {"ja":"みずをください"}', '「ねこはかわいいだです」 → {"ja":"ねこはかわいいです"}', '「すしをたべるしたい」 → {"ja":"すしをたべたい"}', '「えきはどこにありますか」 → {"ja":"えきはどこにありますか"}',
+      '', 'Now: 「' + text + '」', 'Reply with a JSON object: "ja".'].join('\n');
   },
   sayPrompt(s, text) {
     return ['In a Japanese conversation (' + this.scene(s).en.toLowerCase() + '), a learner who is ' + AI.levelText() + ' wants to say: "' + text.slice(0, 300) + '"',
@@ -16048,8 +16051,10 @@ const Talk = {
     const r = await AI.s().json(prompt, { schema, max, signal, modelTier: 'quick', cache: false });
     return r && typeof r === 'object' ? r : {};
   },
-  /** Explanations from the smallest model are too often wrong to show. */
-  canExplain() { return !AI.local() || Local.modelInfo(Local.model).id !== LOCAL_MODELS[0].id; },
+  /** The smallest model's corrections and explanations were too often wrong to show (tested on real sentences):
+      with it, Kotohana only chats. */
+  corrects() { return !AI.local() || Local.modelInfo(Local.model || Local.settings().model).id !== LOCAL_MODELS[0].id; },
+  canExplain() { return this.corrects(); },
 
   /* ----- the conversation ----- */
   async start(o) {
@@ -16099,9 +16104,12 @@ const Talk = {
         u.say = { ja: String(r.ja || '').trim(), en: String(r.en || '').trim() };
         Game.addXp(1, 'talk');
       } else {
-        const r = await this.ask(this.recastPrompt(s, text), Local.SCHEMA.ja, 140, o.signal);
-        u.ja = String(r.ja || '').trim();
-        u.nat = u.ja ? this.natural(text, u.ja) : null;
+        if (this.corrects()) {
+          const r = await this.ask(this.recastPrompt(s, text), Local.SCHEMA.ja, 140, o.signal);
+          u.ja = String(r.ja || '').trim();
+          u.nat = u.ja ? this.natural(text, u.ja) : null;
+          if (u.nat != null) s.chk = (s.chk || 0) + 1;
+        } else u.nat = null;
         s.n++; s.ch += Array.from(text.replace(/\s/g, '')).length; if (u.nat && !u.hinted) s.nat++;
         let xp = 2 + (u.nat && !u.hinted ? 1 : 0);
         const words = this.wordsIn(text), fresh = words.filter(id => s.used.indexOf(id) === -1);
@@ -16121,8 +16129,8 @@ const Talk = {
   end() {
     const s = this.cur; if (!s) return null;
     const st = this.stats();
-    const sum = { at: s.at, topic: s.topic, scene: s.scene, title: s.title, n: s.n, nat: s.nat, ch: s.ch, used: s.used.length, xp: s.xp };
-    if (s.n) { st.s++; st.n += s.n; st.nat += s.nat; st.ch += s.ch; st.used += s.used.length; st.log.push(sum); if (st.log.length > 60) st.log.splice(0, st.log.length - 60); Game.touch(); }
+    const sum = { at: s.at, topic: s.topic, scene: s.scene, title: s.title, n: s.n, chk: s.chk || 0, nat: s.nat, ch: s.ch, used: s.used.length, xp: s.xp };
+    if (s.n) { st.s++; st.n += s.n; st.chk = (st.chk || 0) + sum.chk; st.nat += s.nat; st.ch += s.ch; st.used += s.used.length; st.log.push(sum); if (st.log.length > 60) st.log.splice(0, st.log.length - 60); Game.touch(); }
     this.cur = null; try { Store.del('talk_cur'); } catch (e) {}
     Bus.emit('talk', 'end');
     return sum;
@@ -20475,6 +20483,8 @@ Views.talk = {
     p.appendChild(h('section.talk-start',
       h('div.talk-intro', h('div.talk-avatar', { lang: 'ja', 'aria-hidden': 'true' }, '言花'),
         h('p', 'Write in Japanese (or say it with the microphone). Stuck? Write it in English and Kotohana shows how to say it, then you try. ' + (AI.local() ? 'Kotohana is a small AI on this device: trust the dictionary over it when they disagree.' : ''))),
+      Talk.corrects() ? null : notice('', h('b', 'With the Small model, Kotohana only chats. '), 'Its corrections were too often wrong to show. Choose the Japanese-tuned or Large model (Settings > Kotohana) to see a natural way to say each sentence you write.',
+        btn('Settings', { cls: 'small ghost', icon: 'gear', onclick: () => { openSettings(); setTimeout(() => { const el = $('.local-set'); if (el) el.scrollIntoView({ block: 'start' }); }, 120); } })),
       h('div.talk-opts',
         h('span.label', 'Kotohana speaks'),
         h('div.seg', [['polite', 'です/ます polite'], ['casual', 'タメ口 casual']].map(([v, l]) => h('button.seg-btn' + (style === v ? '.on' : ''), { type: 'button', 'aria-pressed': style === v ? 'true' : 'false',
@@ -20498,9 +20508,9 @@ Views.talk = {
       const last = st.log.slice(-5).reverse();
       p.appendChild(h('section.talk-history', h('h2', duo('記録', 'Your conversations')),
         h('div.figures', h('div.fig', h('b', String(st.s)), h('span', 'conversations')), h('div.fig', h('b', String(st.n)), h('span', 'sentences written')),
-          h('div.fig', h('b', Math.round(100 * st.nat / Math.max(1, st.n)) + '%'), h('span', 'natural first time')), h('div.fig', h('b', String(st.used)), h('span', 'garden words used'))),
+          st.chk ? h('div.fig', h('b', Math.round(100 * st.nat / Math.max(1, st.chk)) + '%'), h('span', 'natural first time')) : null, h('div.fig', h('b', String(st.used)), h('span', 'garden words used'))),
         h('ul.talk-log-list', last.map(x => h('li', h('span.sub', new Date(x.at).toLocaleDateString()), ' ', h('b', x.title || (TALK_SCENES.find(c => c.id === x.scene) || {}).en || (x.topic === 'words' ? 'Your words' : 'Talk')),
-          ' · ' + plural(x.n, 'sentence') + ', ' + x.nat + ' natural, ' + plural(x.used, 'garden word'))))));
+          ' · ' + plural(x.n, 'sentence') + (x.chk ? ', ' + x.nat + ' natural' : '') + ', ' + plural(x.used, 'garden word'))))));
     }
   },
 
@@ -20527,7 +20537,7 @@ Views.talk = {
     this.scroll();
     try { input.focus({ preventScroll: true }); } catch (e) {}
   },
-  drawScore() { const el = $('#talk-score'), s = Talk.cur; if (el && s) mount(el, s.n ? h('span.fine', plural(s.n, 'sentence') + ' · ' + s.nat + ' natural · +' + s.xp + ' XP') : null); },
+  drawScore() { const el = $('#talk-score'), s = Talk.cur; if (el && s) mount(el, s.n ? h('span.fine', plural(s.n, 'sentence') + (s.chk ? ' · ' + s.nat + ' natural' : '') + ' · +' + s.xp + ' XP') : null); },
   scroll() { const l = this.els && this.els.log; if (l && l.lastChild) try { l.lastChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} },
   typing() { return h('li.k.typing', h('div.talk-avatar', { lang: 'ja', 'aria-hidden': 'true' }, '言'), h('div.bubble', h('span.dots', h('i'), h('i'), h('i')), h('span.visually-hidden', 'Kotohana is writing'))); },
   /** A Japanese sentence with readings; every word opens its dictionary card. */
@@ -20546,6 +20556,7 @@ Views.talk = {
     const kids = [h('div.bubble.me', h('p', { lang: this.hasJp(t.text) ? 'ja' : 'en' }, t.text))];
     if (t.say && t.say.ja) kids.push(h('div.talk-fb.say', h('span.tag', 'in Japanese'), this.jp(t.say.ja, { jp: t.say.ja, en: t.say.en }), t.say.en ? h('p.en', t.say.en) : null,
       h('div.bubble-tools', speakBtn(t.say.ja), h('span.fine', 'Now try writing or saying it yourself.'))));
+    else if (t.nat == null && !t.ja && !t.err) { if (t.words && t.words.length) kids.push(h('div.talk-fb.ok', icon('check', 14), ' used ' + plural(t.words.length, 'garden word'))); }
     else if (t.nat === true) kids.push(h('div.talk-fb.ok', icon('check', 14), ' Natural', t.hinted ? h('span.fine', ' (with a hint)') : null, t.words && t.words.length ? h('span.fine', ' · used ' + plural(t.words.length, 'garden word')) : null));
     else if (t.ja) {
       const why = h('p.talk-why');
@@ -20615,7 +20626,7 @@ Views.talk = {
     p.appendChild(h('section.talk-done',
       h('div.talk-avatar.big', { lang: 'ja', 'aria-hidden': 'true' }, '言花'),
       h('h2', { lang: 'ja' }, 'おつかれさま！'),
-      sum.n ? h('div.figures', h('div.fig', h('b', String(sum.n)), h('span', 'sentences in Japanese')), h('div.fig', h('b', String(sum.nat)), h('span', 'natural first time')),
+      sum.n ? h('div.figures', h('div.fig', h('b', String(sum.n)), h('span', 'sentences in Japanese')), sum.chk ? h('div.fig', h('b', String(sum.nat)), h('span', 'natural first time')) : null,
         h('div.fig', h('b', String(sum.used)), h('span', 'garden words used')), h('div.fig', h('b', '+' + sum.xp), h('span', 'XP'))) : h('p.sub', 'No Japanese sentences this time. Next time, try a few: short ones are perfect.'),
       h('div.btn-row', btn('Talk again', { cls: 'primary', onclick: () => this.draw() }), btn('Review my words', { onclick: () => App.go('review') }))));
   }
@@ -21017,13 +21028,13 @@ Views.progress = {
     const st = Game.p.talk; if (!st || !st.s) return null;
     const log = (st.log || []).slice(-10);
     const first = log.slice(0, Math.ceil(log.length / 2)), last = log.slice(Math.ceil(log.length / 2));
-    const rate = a => { const n = a.reduce((x, y) => x + y.n, 0); return n ? Math.round(100 * a.reduce((x, y) => x + y.nat, 0) / n) : null; };
+    const rate = a => { const n = a.reduce((x, y) => x + (y.chk || 0), 0); return n ? Math.round(100 * a.reduce((x, y) => x + y.nat, 0) / n) : null; };
     const len = a => { const n = a.reduce((x, y) => x + y.n, 0); return n ? Math.round(a.reduce((x, y) => x + y.ch, 0) / n) : null; };
     const fig = (n, label) => h('div.fig', h('b', String(n)), h('span', label));
-    const trend = log.length >= 4 && rate(first) != null && rate(last) != null
-      ? h('p.sub', 'Natural first time: ' + rate(first) + '% in your earlier conversations, ' + rate(last) + '% in the latest ones. Average sentence: ' + len(first) + ' → ' + len(last) + ' characters.') : null;
+    const trend = log.length >= 4 && len(first) != null && len(last) != null
+      ? h('p.sub', (rate(first) != null && rate(last) != null ? 'Natural first time: ' + rate(first) + '% in your earlier conversations, ' + rate(last) + '% in the latest ones. ' : '') + 'Average sentence: ' + len(first) + ' → ' + len(last) + ' characters.') : null;
     return h('section', h('h2', duo('会話', 'Conversation with Kotohana')),
-      h('div.figures', fig(st.s, 'conversations'), fig(st.n, 'sentences in Japanese'), fig(Math.round(100 * st.nat / Math.max(1, st.n)) + '%', 'natural first time'),
+      h('div.figures', fig(st.s, 'conversations'), fig(st.n, 'sentences in Japanese'), st.chk ? fig(Math.round(100 * st.nat / Math.max(1, st.chk)) + '%', 'natural first time') : null,
         fig(Math.round(st.ch / Math.max(1, st.n)), 'characters per sentence'), fig(st.used, 'garden words used')),
       trend);
   },
