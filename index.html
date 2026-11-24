@@ -1237,6 +1237,22 @@ body[data-view="theater"] #backdrop.video .bd-video, body[data-view="study"] #ba
 .bd-name small { font-size: 11px; color: var(--ink-3); }
 .field.wide { grid-template-columns: minmax(0, 1fr); }
 
+/* ---------- replay and shadowing in Talk ---------- */
+.talk-cheer { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; margin-top: 4px; font-size: 14px; color: var(--ink-2); }
+.talk-cheer [lang="ja"] { font-family: var(--f-jp); color: var(--ink); }
+.bubble-tools.mine { justify-content: flex-end; }
+.shadow-box:empty { display: none; }
+.shadow-box { max-width: 86%; padding: 8px 12px; border-radius: 10px; background: var(--well); font-size: 14px; }
+.shadow-turn, .shadow-result { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.shadow-result b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.shadow-result [lang="ja"] { font-family: var(--f-jp); font-size: 17px; }
+.shadow-result.great b { color: var(--good); }
+.shadow-result.good b { color: var(--warn); }
+.shadow-result.again b { color: var(--ink-2); }
+.shadow-heard { width: 100%; color: var(--ink-2); font-family: var(--f-jp); }
+.shadow-turn .btn.on { background: var(--shu-soft); color: var(--shu); }
+.talk-opts select { margin-left: 6px; }
+
 </style>
 </head>
 <body>
@@ -13017,7 +13033,7 @@ const Game = {
       settings: { furi: 'all', romaji: false, listenFirst: true, newPerDay: 10, goal: 60, stageSize: 0, tier: 'default',
         voice: 'auto', voiceURI: '', rate: 1, autoSpeak: true, coreDaily: 0, sfx: true, thText: 'furi', backup: true,
         theme: 'auto', bg: 'plain', bgStrength: 0.35, bgVideo: false, bgmVol: 0.5, bgmLines: 'furi', bgmEn: false, bgmShuffle: false,
-        talkStyle: 'polite', talkEn: false, talkVoice: true },
+        talkStyle: 'polite', talkEn: false, talkVoice: true, talkReplay: true, talkCheer: true, talkRate: 0.9 },
       xp: 0, days: {}, skills: {}, kana: {}, gram: {}, srsShards: 0, media: [], lastMedia: null, core: {}, flags: {}
     };
   },
@@ -15144,6 +15160,33 @@ const Voice = {
   available() { return !!this.engine(); },
   rate() { return clamp((Game.p && Game.p.settings.rate) || 1, 0.7, 1.3); },
 
+  /** How natural a browser voice sounds. Neural voices (Edge's "Natural" ones) first, then the browser's own
+      (Google), then the system's; gentle female voices before male ones; voices that need the internet last when offline. */
+  rank(v) {
+    const n = (v.name || '') + ' ' + (v.voiceURI || '');
+    let s = 0;
+    if (/natural|neural/i.test(n)) s += 100; else if (/online/i.test(n)) s += 80;
+    if (/google/i.test(n)) s += 60;
+    if (/enhanced|premium/i.test(n)) s += 50;
+    if (/nanami|aoi|mayu|shiori|kyoko|o-ren|haruka|ayumi|sayaka|google/i.test(n)) s += 10;
+    if (/ichiro|otoya|keita|hattori|daichi|naoki/i.test(n)) s -= 5;
+    if (v.localService === false && typeof navigator !== 'undefined' && navigator.onLine === false) s -= 300;
+    if (v.localService) s += 1;
+    return s;
+  },
+  sorted() { return this.voices.slice().sort((a, b) => this.rank(b) - this.rank(a)); },
+  /** The voice to use: the learner's choice, otherwise the most natural one here. */
+  pick() { const want = Game.p && Game.p.settings.voiceURI; return (want && this.voices.find(v => v.voiceURI === want)) || this.sorted()[0] || null; },
+  label(v) { return String(v.name || '').replace(/\s*[-–]\s*Japanese.*$/i, '').replace(/^Microsoft\s+/, '').replace(/\s+Online\b/i, '').replace(/\s*\((Natural|Neural)\)/i, '') + (/natural|neural/i.test(v.name) ? ' (natural)' : '') + (v.localService === false ? ' · needs internet' : ''); },
+  /** Where to find a Japanese voice when this browser has none. */
+  help() {
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    if (/Android/i.test(ua)) return 'This phone has no Japanese voice for the browser. In Android Settings > System > Languages > Text-to-speech, choose Google’s engine and install Japanese; then reopen Kotonoha.';
+    if (/iPhone|iPad|Macintosh/i.test(ua)) return 'Add a Japanese voice: Settings > Accessibility > Spoken Content > Voices > Japanese (Kyoko or O-ren, the “Enhanced” versions sound best); then reopen Kotonoha.';
+    if (/Windows/i.test(ua)) return 'This browser has no Japanese voice. For the most natural one, open Kotonoha in Microsoft Edge (its voice Nanami is very natural; it needs the internet) or in Chrome (Google 日本語). To hear Japanese without the internet too, add Japanese in Windows: Settings > Time & language > Speech > Add voices > 日本語.';
+    return 'This browser has no Japanese voice. Microsoft Edge (Nanami) and Chrome (Google 日本語) have good ones.';
+  },
+
   /** Speak Japanese text. Call from a click. Resolves when finished or stopped; never throws. */
   async speak(text, opts) {
     Bus.emit('speaking', true);
@@ -15207,20 +15250,28 @@ const Voice = {
     if (!this._toldAt || now() - this._toldAt > 20000) { this._toldAt = now(); toast(code === 'rate_limited' ? 'The voice needs a short rest. Try again in a moment.' : 'The voice is not available right now.'); }
     return false;
   },
-  _browserSpeak(text, rate, keepSeq) {
+  _browserSpeak(text, rate, keepSeq, voice, retried) {
     if (!this.synth || !this.voices.length) return Promise.resolve(false);
     if (!keepSeq) this._seq = null;
     return new Promise(res => {
       try {
         this.synth.cancel();
         const u = new SpeechSynthesisUtterance(text);
-        const want = Game.p && Game.p.settings.voiceURI;
-        u.voice = this.voices.find(v => v.voiceURI === want) || this.voices[0];
-        u.lang = u.voice.lang || 'ja-JP';
+        const v = voice || this.pick();
+        u.voice = v;
+        u.lang = (v && v.lang) || 'ja-JP';
         u.rate = clamp(rate, 0.5, 1.6);
+        u.pitch = 1;
         let done = false;
         const fin = ok => { if (done) return; done = true; this.state = 'idle'; Bus.emit('voice-state', 'idle'); res(ok); };
-        u.onend = () => fin(true); u.onerror = () => fin(false);
+        u.onend = () => fin(true);
+        u.onerror = ev => {
+          // a voice that needs the internet failed: say it with a voice on this device instead
+          const why = ev && ev.error;
+          const local = !retried && v && v.localService === false && why !== 'interrupted' && why !== 'canceled' ? this.sorted().find(x => x.localService) : null;
+          if (local && !done) { done = true; res(this._browserSpeak(text, rate, true, local, true)); return; }
+          fin(false);
+        };
         this._utter = u; this.state = 'speaking'; Bus.emit('voice-state', 'speaking');
         this.synth.speak(u);
         setTimeout(() => fin(true), Math.max(4000, text.length * 450));   // some browsers never fire onend
@@ -15955,8 +16006,38 @@ const TALK_SCENES = [
     open: 'こんにちは！今日はどんな一日でしたか？', openEn: 'Hello! How was your day today?', openC: 'おつかれ！今日はどんな一日だった？', openCEn: 'Hey! How was your day today?' }
 ];
 
+/** Kotohana's encouragement, spoken before your sentence is replayed and after you shadow one. */
+const TALK_CHEERS = {
+  nat: [['いいですね！', 'Nice!'], ['とても自然です！', 'Very natural!'], ['その調子！', 'Keep it up!'], ['上手ですね！', 'Well said!']],
+  recast: [['こう言うと、もっと自然ですよ。', 'Said like this, it sounds more natural.'], ['こんなふうに言ってみましょう。', 'Let’s try saying it like this.'], ['おしい！こう言いますよ。', 'So close! We say it like this.']],
+  great: [['すばらしい！', 'Wonderful!'], ['完璧です！', 'Perfect!'], ['とても上手です！', 'Very good!']],
+  good: [['いいですね。もう少し！', 'Good. Almost there!'], ['おしい！もう一回。', 'So close! Once more.']],
+  again: [['だいじょうぶ。ゆっくりもう一回。', 'It’s OK. Once more, slowly.'], ['あせらなくていいですよ。もう一回。', 'No rush. Once more.']]
+};
+
 const Talk = {
   cur: null, busy: false, _loaded: false,
+  cheer(kind) { const a = TALK_CHEERS[kind] || TALK_CHEERS.nat, c = a[Math.floor(Math.random() * a.length)]; return { ja: c[0], en: c[1] }; },
+  /** Kotohana speaks a little slower than usual: calm, and easier to follow. */
+  rate() { return clamp(Number(Game.p.settings.talkRate) || 0.9, 0.7, 1.2); },
+  /** What to say aloud after a message: encouragement and your sentence said naturally, then Kotohana's answer. */
+  speechFor(u, k) {
+    const s = Game.p.settings, out = [];
+    if (u && s.talkReplay !== false) {
+      if (u.say && u.say.ja) out.push(u.say.ja);
+      else if (u.ja) { if (s.talkCheer !== false && u.cheer) out.push(u.cheer.ja); out.push(u.ja); }
+    }
+    if (k && k.ja && s.talkVoice !== false) out.push(k.ja);
+    return out;
+  },
+  /** One shadowing attempt (listen, then say it the same way): score 0–1. */
+  shadowed(score) {
+    const s = this.cur; if (!s) return 0;
+    s.sh = (s.sh || 0) + 1; if (score >= 0.85) s.shGood = (s.shGood || 0) + 1;
+    const xp = score >= 0.85 ? 2 : 1;
+    s.xp += xp; Game.addXp(xp, 'talk'); this.save();
+    return xp;
+  },
   /** Kotohana can talk when an AI is there: Claude online, the model on this device otherwise. */
   available() { return AI.available(); },
   async load() {
@@ -16109,7 +16190,7 @@ const Talk = {
           const r = await this.ask(this.recastPrompt(s, text), Local.SCHEMA.ja, 140, o.signal);
           u.ja = String(r.ja || '').trim();
           u.nat = u.ja ? this.natural(text, u.ja) : null;
-          if (u.nat != null) s.chk = (s.chk || 0) + 1;
+          if (u.nat != null) { s.chk = (s.chk || 0) + 1; u.cheer = this.cheer(u.nat ? 'nat' : 'recast'); }
         } else u.nat = null;
         s.n++; s.ch += Array.from(text.replace(/\s/g, '')).length; if (u.nat && !u.hinted) s.nat++;
         let xp = 2 + (u.nat && !u.hinted ? 1 : 0);
@@ -16130,8 +16211,8 @@ const Talk = {
   end() {
     const s = this.cur; if (!s) return null;
     const st = this.stats();
-    const sum = { at: s.at, topic: s.topic, scene: s.scene, title: s.title, n: s.n, chk: s.chk || 0, nat: s.nat, ch: s.ch, used: s.used.length, xp: s.xp };
-    if (s.n) { st.s++; st.n += s.n; st.chk = (st.chk || 0) + sum.chk; st.nat += s.nat; st.ch += s.ch; st.used += s.used.length; st.log.push(sum); if (st.log.length > 60) st.log.splice(0, st.log.length - 60); Game.touch(); }
+    const sum = { at: s.at, topic: s.topic, scene: s.scene, title: s.title, n: s.n, chk: s.chk || 0, nat: s.nat, ch: s.ch, used: s.used.length, sh: s.sh || 0, shGood: s.shGood || 0, xp: s.xp };
+    if (s.n || sum.sh) { st.s++; st.n += s.n; st.chk = (st.chk || 0) + sum.chk; st.nat += s.nat; st.ch += s.ch; st.used += s.used.length; st.sh = (st.sh || 0) + sum.sh; st.shGood = (st.shGood || 0) + sum.shGood; st.log.push(sum); if (st.log.length > 60) st.log.splice(0, st.log.length - 60); Game.touch(); }
     this.cur = null; try { Store.del('talk_cur'); } catch (e) {}
     Bus.emit('talk', 'end');
     return sum;
@@ -16996,11 +17077,12 @@ function openSettings() {
     Bgm.section(),
     h('section', h('h3', 'Voice'),
       field('Voice', Voice.available() ? 'Used for words, and for lines that have no audio clip.' : 'No Japanese voice is available in this view.', select('set-voice', 'voice', voiceOpts)),
-      Voice.voices.length ? field('Browser voice', null, select('set-voiceuri', 'voiceURI', [['', 'Default']].concat(Voice.voices.map(v => [v.voiceURI, v.name])))) : null,
+      Voice.voices.length ? field('Browser voice', 'The natural ones sound best. Kotohana uses this voice too.', select('set-voiceuri', 'voiceURI', [['', 'The most natural here (' + Voice.label(Voice.sorted()[0]) + ')']].concat(Voice.sorted().map(v => [v.voiceURI, Voice.label(v)])))) : null,
+      !Voice.voices.length && !Voice.available() ? h('p.notice', Voice.help()) : null,
       field('Speed', null, select('set-rate', 'rate', [[0.8, 'Slow'], [0.9, 'A little slow'], [1, 'Natural'], [1.1, 'A little fast']], Number)),
       field('Play the word after each review answer', 'The line from your song when there is one, otherwise the voice reads the word.', check('set-auto', 'autoSpeak')),
       field('Game sounds', 'Little chimes for right and wrong answers in Play mode.', check('set-sfx', 'sfx')),
-      Voice.available() ? h('div.btn-row', btn('Test the voice', { cls: 'small', icon: 'speaker', onclick: () => Voice.speak('こんにちは。今日も一緒に勉強しましょう。') })) : null),
+      Voice.available() ? h('div.btn-row', btn('Test the voice', { cls: 'small', icon: 'speaker', onclick: () => Voice.speak('こんにちは。ことはなです。今日もいっしょに、ゆっくりがんばりましょう。', { rate: 0.9 }) })) : null),
     PhoneApp.section(),
     h('section', h('h3', 'Your save'),
       h('p.fine', Store.mode === 'db' ? 'Progress is saved to your Claude account for this page and follows you across devices.'
@@ -20476,6 +20558,8 @@ Views.talk = {
       mount(note, h('p.sub', AI.local() && !Local.ready() ? 'Starting Kotohana… (the first start of a visit takes a little while)' : 'Kotohana is getting ready…'));
       try { await Talk.start(Object.assign({ style: Game.p.settings.talkStyle }, o)); } catch (e) { toast(AI.errText(e), 'bad'); }
       if (App.cur === 'talk') this.draw();
+      const first = Talk.cur && Talk.cur.turns[0];
+      if (first && Game.p.settings.talkVoice !== false && Voice.available()) Voice.speak(first.ja, { rate: Talk.rate() });
     };
     const note = h('div.talk-note');
     const targets = Talk.pickTargets(8);
@@ -20491,7 +20575,12 @@ Views.talk = {
         h('div.seg', [['polite', 'です/ます polite'], ['casual', 'タメ口 casual']].map(([v, l]) => h('button.seg-btn' + (style === v ? '.on' : ''), { type: 'button', 'aria-pressed': style === v ? 'true' : 'false',
           onclick: () => { Game.p.settings.talkStyle = v; Game.touch(); this.drawStart(); } }, l))),
         h('label.check', h('input', { type: 'checkbox', checked: !!s.talkEn, onchange: e => { s.talkEn = e.target.checked; Game.touch(); } }), 'Show English under Kotohana’s lines'),
-        Voice.available() ? h('label.check', h('input', { type: 'checkbox', checked: s.talkVoice !== false, onchange: e => { s.talkVoice = e.target.checked; Game.touch(); } }), 'Read Kotohana’s lines aloud') : null),
+        Voice.available() ? h('label.check', h('input', { type: 'checkbox', checked: s.talkVoice !== false, onchange: e => { s.talkVoice = e.target.checked; Game.touch(); } }), 'Read Kotohana’s lines aloud') : null,
+        Voice.available() ? h('label.check', h('input', { type: 'checkbox', checked: s.talkReplay !== false, onchange: e => { s.talkReplay = e.target.checked; Game.touch(); } }), 'Replay my sentences in a native voice') : null,
+        Voice.available() ? h('label.check', h('input', { type: 'checkbox', checked: s.talkCheer !== false, onchange: e => { s.talkCheer = e.target.checked; Game.touch(); } }), 'Encouraging words') : null,
+        Voice.available() ? h('label.check', 'Pace', h('select', { id: 'talk-rate', onchange: e => { s.talkRate = Number(e.target.value); Game.touch(); } },
+          [[0.8, 'Gentle'], [0.9, 'Calm'], [1, 'Natural']].map(([v, l]) => h('option', { value: v, selected: Math.abs(Talk.rate() - v) < 0.01 }, l)))) : null),
+      Voice.available() ? null : notice('', h('b', 'Kotohana cannot speak in this browser. '), Voice.help()),
       h('h2', 'Choose a conversation'),
       h('div.talk-topics',
         h('div.talk-topic.wide',
@@ -20527,6 +20616,7 @@ Views.talk = {
     input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(input); } });
     this.els = { log, input, send, hint, hintBox };
     p.appendChild(h('section.talk-chat',
+      Voice.available() ? null : notice('', h('b', 'No Japanese voice here, so Kotohana is silent. '), Voice.help()),
       h('div.talk-head', h('div', h('b', { lang: 'ja' }, sc.jp), ' ', h('span.sub', sc.en + ' · ' + (Talk.polite(s) ? 'polite' : 'casual'))),
         h('div.talk-score', { id: 'talk-score' }), btn('End', { cls: 'small ghost', icon: 'stop', onclick: () => this.finish() })),
       log,
@@ -20538,7 +20628,7 @@ Views.talk = {
     this.scroll();
     try { input.focus({ preventScroll: true }); } catch (e) {}
   },
-  drawScore() { const el = $('#talk-score'), s = Talk.cur; if (el && s) mount(el, s.n ? h('span.fine', plural(s.n, 'sentence') + (s.chk ? ' · ' + s.nat + ' natural' : '') + ' · +' + s.xp + ' XP') : null); },
+  drawScore() { const el = $('#talk-score'), s = Talk.cur; if (el && s) mount(el, s.n || s.sh ? h('span.fine', plural(s.n, 'sentence') + (s.chk ? ' · ' + s.nat + ' natural' : '') + (s.sh ? ' · ' + s.sh + ' shadowed' : '') + ' · +' + s.xp + ' XP') : null); },
   scroll() { const l = this.els && this.els.log; if (l && l.lastChild) try { l.lastChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} },
   typing() { return h('li.k.typing', h('div.talk-avatar', { lang: 'ja', 'aria-hidden': 'true' }, '言'), h('div.bubble', h('span.dots', h('i'), h('i'), h('i')), h('span.visually-hidden', 'Kotohana is writing'))); },
   /** A Japanese sentence with readings; every word opens its dictionary card. */
@@ -20549,16 +20639,22 @@ Views.talk = {
   },
   turnEl(t) {
     if (t.who === 'k') {
-      const en = h('p.en', { hidden: !Game.p.settings.talkEn }, t.en || '');
+      const en = h('p.en', { hidden: !Game.p.settings.talkEn }, t.en || ''), sbox = h('div.shadow-box');
       return h('li.k', h('div.talk-avatar', { lang: 'ja', 'aria-hidden': 'true' }, '言'),
         h('div.bubble', this.jp(t.ja, { jp: t.ja, en: t.en }), en,
-          h('div.bubble-tools', speakBtn(t.ja), t.en ? btn('English', { cls: 'small ghost', onclick: e => { en.hidden = !en.hidden; e.currentTarget.classList.toggle('on', !en.hidden); } }) : null)));
+          h('div.bubble-tools', speakBtn(t.ja, { rate: Talk.rate() }), t.en ? btn('English', { cls: 'small ghost', onclick: e => { en.hidden = !en.hidden; e.currentTarget.classList.toggle('on', !en.hidden); } }) : null,
+            this.shadowBtn(t.ja, sbox)), sbox));
     }
-    const kids = [h('div.bubble.me', h('p', { lang: this.hasJp(t.text) ? 'ja' : 'en' }, t.text))];
+    const jp = this.hasJp(t.text), sbox = h('div.shadow-box');
+    const cheer = t.cheer ? h('p.talk-cheer', icon('speaker', 13), ' ', h('span', { lang: 'ja' }, t.cheer.ja), ' ', h('span.fine', t.cheer.en)) : null;
+    const kids = [h('div.bubble.me', h('p', { lang: jp ? 'ja' : 'en' }, t.text))];
     if (t.say && t.say.ja) kids.push(h('div.talk-fb.say', h('span.tag', 'in Japanese'), this.jp(t.say.ja, { jp: t.say.ja, en: t.say.en }), t.say.en ? h('p.en', t.say.en) : null,
-      h('div.bubble-tools', speakBtn(t.say.ja), h('span.fine', 'Now try writing or saying it yourself.'))));
-    else if (t.nat == null && !t.ja && !t.err) { if (t.words && t.words.length) kids.push(h('div.talk-fb.ok', icon('check', 14), ' used ' + plural(t.words.length, 'garden word'))); }
-    else if (t.nat === true) kids.push(h('div.talk-fb.ok', icon('check', 14), ' Natural', t.hinted ? h('span.fine', ' (with a hint)') : null, t.words && t.words.length ? h('span.fine', ' · used ' + plural(t.words.length, 'garden word')) : null));
+      h('div.bubble-tools', speakBtn(t.say.ja, { rate: Talk.rate() }), this.shadowBtn(t.say.ja, sbox), h('span.fine', 'Now try writing or saying it yourself.')), sbox));
+    else if (t.nat == null && !t.ja && !t.err) {
+      kids.push(h('div.bubble-tools.mine', jp ? speakBtn(t.text, { rate: Talk.rate() }) : null, t.words && t.words.length ? h('span.fine', icon('check', 13), ' used ' + plural(t.words.length, 'garden word')) : null));
+    }
+    else if (t.nat === true) kids.push(h('div.talk-fb.ok', icon('check', 14), ' Natural', t.hinted ? h('span.fine', ' (with a hint)') : null, t.words && t.words.length ? h('span.fine', ' · used ' + plural(t.words.length, 'garden word')) : null),
+      cheer, h('div.bubble-tools.mine', speakBtn(t.ja || t.text, { rate: Talk.rate() }), this.shadowBtn(t.ja || t.text, sbox)), sbox);
     else if (t.ja) {
       const why = h('p.talk-why');
       const swap = h('div.talk-recast');
@@ -20566,15 +20662,58 @@ Views.talk = {
       const drawR = () => mount(swap, ruby ? this.jp(t.ja, { jp: t.ja }) : h('p.diff', { lang: 'ja', title: 'Tap for readings and the dictionary', role: 'button', tabindex: 0, onclick: () => { ruby = true; drawR(); } }, diffMarks(t.text, t.ja)));
       drawR();
       if (t.why) mount(why, t.why, h('span.fine', ' (Kotohana can be wrong)'));
-      kids.push(h('div.talk-fb.recast', h('span.tag', 'a natural way to say it'), swap, why,
-        h('div.bubble-tools', speakBtn(t.ja),
+      kids.push(h('div.talk-fb.recast', h('span.tag', 'a natural way to say it'), swap, why, cheer,
+        h('div.bubble-tools', speakBtn(t.ja, { rate: Talk.rate() }), this.shadowBtn(t.ja, sbox),
           Talk.canExplain() && !t.why ? btn('Why?', { cls: 'small ghost', onclick: async e => { const b = e.currentTarget; b.disabled = true; mount(why, h('span.sub', 'Thinking…')); try { mount(why, await Talk.why(t), h('span.fine', ' (Kotohana can be wrong)')); b.remove(); } catch (x) { mount(why, h('span.sub', AI.errText(x))); b.disabled = false; } } }) : null,
-          t.words && t.words.length ? h('span.fine', 'used ' + plural(t.words.length, 'garden word')) : null)));
+          t.words && t.words.length ? h('span.fine', 'used ' + plural(t.words.length, 'garden word')) : null)), sbox);
     }
     if (t.err) kids.push(h('p.talk-fb.bad', t.err));
     return h('li.u', kids);
   },
   hasJp(t) { return Talk.hasJapanese(t); },
+  /** Shadowing: hear the sentence in a native voice, then say it the same way, with the same rhythm. */
+  shadowBtn(text, box) {
+    if (!Voice.available()) return null;
+    return btn('Shadow it', { cls: 'small ghost', icon: 'loop', title: 'Listen, then say it the same way', onclick: () => this.shadow(text, box) });
+  },
+  async shadow(text, box) {
+    if (this._shadowing) return;
+    this._shadowing = true;
+    try {
+      mount(box, h('p.sub.shadow-listen', icon('speaker', 14), ' Listen to how it sounds…'));
+      await Voice.speak(text, { rate: Talk.rate() });
+      if (!box.isConnected) return;
+      const again = btn('Hear it again', { cls: 'small ghost', icon: 'speaker', onclick: () => this.shadow(text, box) });
+      if (Mic.available()) {
+        const go = btn('Say it now', { cls: 'small primary', icon: 'mic', onclick: () => this.shadowListen(text, box, go) });
+        mount(box, h('div.shadow-turn', h('span', 'Your turn: say it the same way, with the same rhythm.'), go, again));
+      } else {
+        mount(box, h('div.shadow-turn', h('span', 'Your turn: say it aloud the same way. How close was it?'),
+          btn('Close', { cls: 'small', onclick: () => this.shadowDone(text, box, 0.9) }), btn('Not yet', { cls: 'small ghost', onclick: () => this.shadowDone(text, box, 0.5) }), again));
+      }
+    } finally { this._shadowing = false; }
+  },
+  shadowListen(text, box, b) {
+    if (b.classList.contains('on')) { Mic.stop(); return; }
+    Voice.stop(); Bus.emit('listening', true);
+    b.classList.add('on'); b.lastChild.textContent = 'Listening… tap to stop';
+    const heard = h('p.shadow-heard', { lang: 'ja' }); box.appendChild(heard);
+    Mic.listen({ onPartial: t => { heard.textContent = t; } }).then(t => {
+      Bus.emit('listening', false);
+      this.shadowDone(text, box, t ? JP.similarity(Talk.sound(t), Talk.sound(text)) : 0, t || '');
+    }, () => { Bus.emit('listening', false); b.classList.remove('on'); b.lastChild.textContent = 'Say it now'; toast('The microphone did not start. Say it aloud anyway, then try again.'); });
+  },
+  shadowDone(text, box, score, heard) {
+    const level = score >= 0.85 ? 'great' : score >= 0.6 ? 'good' : 'again';
+    const c = Talk.cheer(level), xp = Talk.shadowed(score);
+    mount(box, h('div.shadow-result.' + level,
+      heard != null ? h('b', Math.round(score * 100) + '%') : null,
+      h('span', { lang: 'ja' }, c.ja), h('span.fine', c.en + ' · +' + xp + ' XP'),
+      btn(level === 'great' ? 'Once more' : 'Try again', { cls: 'small ghost', icon: 'loop', onclick: () => this.shadow(text, box) }),
+      heard ? h('p.shadow-heard', { lang: 'ja' }, 'Heard: ' + heard) : null));
+    this.drawScore();
+    if (Game.p.settings.talkCheer !== false && Voice.available()) Voice.speak(c.ja, { rate: Talk.rate() });
+  },
   async send(input) {
     const text = input.value.trim(); if (!text || Talk.busy) return;
     const hinted = !!this.hinted && this.hinted === text; this.hinted = null;
@@ -20594,8 +20733,8 @@ Views.talk = {
     turns.forEach(t => log.appendChild(this.turnEl(t)));
     this.drawScore(); this.scroll();
     this.els.send.disabled = false; this.els.hint.disabled = false;
-    const k = turns.find(t => t.who === 'k');
-    if (k && Game.p.settings.talkVoice !== false && Voice.available()) Voice.speak(k.ja, { auto: true });
+    const seq = Talk.speechFor(turns.find(t => t.who === 'u'), turns.find(t => t.who === 'k'));
+    if (seq.length && Voice.available()) Voice.speakLines(seq, { rate: Talk.rate() });
     try { input.focus({ preventScroll: true }); } catch (e) {}
   },
   async hint(b, box, input) {
@@ -20628,7 +20767,7 @@ Views.talk = {
       h('div.talk-avatar.big', { lang: 'ja', 'aria-hidden': 'true' }, '言花'),
       h('h2', { lang: 'ja' }, 'おつかれさま！'),
       sum.n ? h('div.figures', h('div.fig', h('b', String(sum.n)), h('span', 'sentences in Japanese')), sum.chk ? h('div.fig', h('b', String(sum.nat)), h('span', 'natural first time')) : null,
-        h('div.fig', h('b', String(sum.used)), h('span', 'garden words used')), h('div.fig', h('b', '+' + sum.xp), h('span', 'XP'))) : h('p.sub', 'No Japanese sentences this time. Next time, try a few: short ones are perfect.'),
+        h('div.fig', h('b', String(sum.used)), h('span', 'garden words used')), sum.sh ? h('div.fig', h('b', sum.shGood + '/' + sum.sh), h('span', 'shadowed closely')) : null, h('div.fig', h('b', '+' + sum.xp), h('span', 'XP'))) : h('p.sub', 'No Japanese sentences this time. Next time, try a few: short ones are perfect.'),
       h('div.btn-row', btn('Talk again', { cls: 'primary', onclick: () => this.draw() }), btn('Review my words', { onclick: () => App.go('review') }))));
   }
 };
@@ -21036,7 +21175,7 @@ Views.progress = {
       ? h('p.sub', (rate(first) != null && rate(last) != null ? 'Natural first time: ' + rate(first) + '% in your earlier conversations, ' + rate(last) + '% in the latest ones. ' : '') + 'Average sentence: ' + len(first) + ' → ' + len(last) + ' characters.') : null;
     return h('section', h('h2', duo('会話', 'Conversation with Kotohana')),
       h('div.figures', fig(st.s, 'conversations'), fig(st.n, 'sentences in Japanese'), st.chk ? fig(Math.round(100 * st.nat / Math.max(1, st.chk)) + '%', 'natural first time') : null,
-        fig(Math.round(st.ch / Math.max(1, st.n)), 'characters per sentence'), fig(st.used, 'garden words used')),
+        fig(Math.round(st.ch / Math.max(1, st.n)), 'characters per sentence'), fig(st.used, 'garden words used'), st.sh ? fig((st.shGood || 0) + '/' + st.sh, 'shadowed closely') : null),
       trend);
   },
   calendar() {
@@ -21192,6 +21331,7 @@ Views.guide = {
       h('ul.plain',
         h('li', h('b', 'Choose a conversation. '), 'A scene (a café, a ramen shop, a convenience store, asking the way, meeting someone, weekend plans, anime), your own words from the garden, or a song from your library. Pick polite です/ます or casual speech.'),
         h('li', h('b', 'Write or say it. '), 'Answer in Japanese, even a few words. Kotohana shows a natural way to say what you wrote, with the changes marked, and answers. Every word has readings and opens its dictionary card. Stuck? Write it in English: Kotohana shows how to say it, then you try.'),
+        h('li', h('b', 'Hear it, then shadow it. '), 'Kotohana says a word of encouragement and replays your sentence, said naturally, in a calm Japanese voice, then answers aloud. Shadow it: listen, then say it the same way with the same rhythm; with a microphone the game scores how close you came. Hearing and copying whole sentences builds natural speech, not just memory. The voice is your browser’s: Microsoft Edge (Nanami) and Chrome (Google 日本語) sound the most natural.'),
         h('li', h('b', 'What is measured. '), 'Sentences written, how many came out natural first time, how long they are, and how many garden words you used. Progress shows the trend. Each sentence earns XP; natural ones and garden words earn more.'))));
     page.appendChild(h('section', h('h2', duo('ながら聴き', 'Background listening and backgrounds')),
       h('ul.plain',

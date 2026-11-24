@@ -7,5 +7,6 @@ Learn Japanese from your own songs and episodes. This is the installable phone v
 - Everything you add and your progress stay on the device. Nothing is uploaded.
 - Kotohana (Settings > Kotohana): an optional small AI that runs on the phone's graphics chip through WebGPU. It chats with you in Japanese (Talk) and adds translations, notes, recaps and grading. It downloads once (about 1 GB for the small model) from Hugging Face.
 - Background listening keeps your songs playing while you study other screens, and Settings > Appearance changes the theme and background.
+- Reading aloud uses the phone's Japanese voice (Android: Settings > System > Languages > Text-to-speech, Google engine, Japanese). In Talk, Kotohana replays your sentence said naturally and you can shadow it.
 
 Data: JMdict and KANJIDIC2 (EDRDG, CC BY-SA 4.0), kuromoji.js (Apache 2.0) with IPADIC (NAIST), JLPT lists by Jonathan Waller (CC BY), KanjiVG by Ulrich Apel (CC BY-SA 3.0), WebLLM by MLC AI (Apache 2.0). Details in data/LICENSES.txt.
