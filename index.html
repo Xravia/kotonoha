@@ -15910,13 +15910,13 @@ const Names = {
   /** Words around a song's name in video titles that are not the name. */
   NOISE: /\b(?:official\s*(?:music\s*)?video|official\s*audio|music\s*video|music\s*clip|lyrics?\s*video|lyric|lyrics|full\s*ver(?:sion)?|tv\s*(?:size|ver(?:sion)?)|creditless|non[- ]?credit|clean|hd|hq|4k|1080p|mv|pv|eng\s*sub(?:bed)?|english\s*sub(?:titles?)?|romaji|kan\/rom\/eng|audio|official(?![぀-ヿ一-鿿])|ver\.?)\b|歌詞付き|歌詞|ノンクレジット|公式|フル|ＭＶ|ＰＶ|ミュージックビデオ|ＴＶサイズ|TVサイズ/gi,
   /** A version that is not the studio recording: lines will not keep time with LRCLIB. */
-  VERSION: /cover|カバー|歌唱|ものまね|アカペラ|a\s*cappella|替え歌|parody|fan\s*-?made|歌ってみた|弾いてみた|叩いてみた|踊ってみた|piano|ピアノ|instrumental|inst\.?\b|off\s*vocal|karaoke|カラオケ|remix|nightcore|slowed|sped\s*up|reverb|8d\b|live|ライブ|first\s*take|acoustic|アコースティック|orchestra|オーケストラ|music\s*box|オルゴール|reaction|tutorial|guitar|ギター|bass|drum|ドラム|メドレー|medley|mashup|english\s*ver|英語/i,
+  VERSION: /cover|カバー|歌唱|を歌う|切り抜き|ものまね|アカペラ|a\s*cappella|替え歌|parody|fan\s*-?made|ツアー|\btour\b|ドーム|\bdome\b|\barena\b|アリーナ|武道館|公演|\bsession\b|セッション|レッスン|\blesson\b|解説|歌い方|ボイトレ|ボイストレーナー|弾き語り|[(（](?![^)）]*\bfull\b)[^)）]*\bver\.?\s*[)）]|\bAI\s*(?:cover|カバー)|歌ってみた|弾いてみた|叩いてみた|踊ってみた|piano|ピアノ|instrumental|inst\.?\b|off\s*vocal|karaoke|カラオケ|remix|nightcore|slowed|sped\s*up|reverb|8d\b|live|ライブ|first\s*take|acoustic|アコースティック|orchestra|オーケストラ|music\s*box|オルゴール|reaction|tutorial|guitar|ギター|bass|drum|ドラム|メドレー|medley|mashup|english\s*ver|英語/i,
   clean(s) { return String(s || '').normalize('NFKC').replace(/\s+/g, ' ').trim(); },
   isNoise(s) { return new RegExp(this.NOISE.source, 'i').test(s); },
   stripNoise(s) { return String(s || '').replace(new RegExp(this.NOISE.source, 'gi'), ' '); },
   /** Channels that upload anime openings but are not the singer. */
   /** Fan videos with the words burned in. Cases matter here: MAD and AMV are fan edits, "mad" is a word. */
-  LYRICVID: /\blyrics?\b|歌詞|가사|해석|발음|번역|歌词|中字|中文|字幕|kan\s*\/\s*rom|rom\s*\/\s*eng|eng\s*sub|english\s*sub|vietsub|letra|legendado|traducci|vostfr|paroles|sub\s*esp/i,
+  LYRICVID: /\blyrics?\b|歌詞|가사|해석|발음|번역|歌词|中字|中文|字幕|kan\s*\/\s*rom|rom\s*\/\s*eng|\+\s*rom\b|eng\s*sub|english\s*sub|\bsubs?\b\.?|vietsub|letra|legendado|traducci|vostfr|paroles|español/i,
   FANEDIT: /\bMAD\b|\bAMV\b|\bMMD\b/,
   NOT_ARTIST: /crunchyroll|aniplex|toho|netflix|mappa|muse\s*asia|ani-?one|animelab|funimation|tv\s*tokyo|テレビ東京|toei|kadokawa|pony\s*canyon|ポニーキャニオン|sony\s*music|avex|lantis|king\s*records|warner|universal|bandai|flying\s*dog|nbcuniversal|ufotable|anime|アニメ|lyrics?|歌詞|subs?\b|the first take/i,
   /** A channel name without the words around the artist (LiSA Official YouTube -> LiSA, Aimer - Topic -> Aimer). */
@@ -15971,7 +15971,7 @@ const Names = {
     const anime = this.anime(raw), theme = this.theme(raw), version = (this.VERSION.exec(raw) || [''])[0];
     let t = raw.replace(/[(（][^)）]*(?:アニメ|anime|\bOP\b|\bED\b|opening|ending|テーマ|theme|主題歌|挿入歌)[^)）]*[)）]/gi, ' ');
     let artist = '', song = '', romaji = [];
-    let m = /【([^】]{1,30})】/.exec(t);                                            // 【Ado】うっせぇわ
+    let m = /^\s*【([^】]{1,30})】/.exec(t);                                       // 【Ado】うっせぇわ
     if (m && !this.isNoise(m[1]) && !this.VERSION.test(m[1]) && !/アニメ|anime|\bop\b|\bed\b|mv|pv|eng|sub|歌詞|lyric|official/i.test(m[1])) { artist = m[1]; t = t.replace(m[0], ' '); }
     t = t.replace(/【[^】]*】|\[[^\]]*\]|［[^］]*］/g, ' ');
     // a quoted name: the one sung by someone named just before it, not the anime or a season's title
@@ -16199,6 +16199,23 @@ const Maker = {
     return groups;
   },
   NOT_ARTIST_CH: /aniplex|toho|crunchyroll|ponycanyon|pony\s*canyon|sony\s*music|avex|lantis|king\s*records|flying\s*dog|warner|universal\s*music|kadokawa|ufotable|mappa|animelab|muse\s*asia|ani-?one/i,
+  /** What videos that name the song also call it (its romaji or English names), and the anime they mention. */
+  learn(vids, title, skip) {
+    const al = new Map(), an = new Map(), low = String(title || '').toLowerCase();
+    skip = (skip || []).filter(Boolean);
+    for (const v of vids.slice(0, 24)) {
+      const sp = Names.split(v.title, v.channel);
+      if (!low || !(String(v.title).toLowerCase().indexOf(low) !== -1 || Names.sameName(sp.title, title))) continue;
+      for (const r of Names.latin(v.title, skip.concat([Names.channel(v.channel), v.channel])).concat(sp.romaji || [])) {
+        const x = Names.clean(r);
+        if (x.length < 3 || Names.isNoise(x) || this.JUNK.test(x) || Names.VERSION.test(x) || Names.LYRICVID.test(x) || skip.some(k => Names.sameName(k, x) || x.toLowerCase().indexOf(String(k).toLowerCase()) !== -1)) continue;
+        const k = x.toLowerCase(); al.set(k, { x, n: (al.has(k) ? al.get(k).n : 0) + 1 });
+      }
+      const a = Names.anime(v.title); if (a) an.set(a, (an.get(a) || 0) + 1);
+    }
+    return { aliases: Array.from(al.values()).sort((a, b) => b.n - a.n).map(o => o.x).slice(0, 4),
+      anime: Array.from(an.entries()).sort((a, b) => (JP.hasJapanese(a[0]) - JP.hasJapanese(b[0])) || b[1] - a[1]).map(e => e[0])[0] || '' };
+  },
   /** Words in video titles that are not a song's name. */
   JUNK: /^(by|feat\.?|ft\.?|with)\s|\b(feat|tour|live|ver|version|edit|size|mad|amv|mmd|dtm|hd|hq|4k|official|theme|opening|ending|full|cover|remix|practice|dance|movie|trailer|teaser|pv|mv|cm|clip|season|episode|ep|arena|concert|reaction|lyrics?|sub|subs|romaji|eng|kan|rom)\b/i,
   /** The song a video is of, or '' when its title names no song (only the artist, the anime, "AMV"…). */
@@ -16319,13 +16336,15 @@ const Maker = {
   scoreVideo(v, want, g) {
     let s = 0;
     const title = Names.clean(v.title), ch = Names.channel(v.channel);
-    const tSim = Math.max(Names.simName(Names.split(v.title, v.channel).title, want.title || ''), title.indexOf(want.title || '\u0000') !== -1 ? 0.9 : 0);
+    const vt = Names.split(v.title, v.channel).title, low = title.toLowerCase();
+    let tSim = Math.max(Names.simName(vt, want.title || ''), title.indexOf(want.title || '\u0000') !== -1 ? 0.9 : 0);
+    for (const a of want.alts || []) tSim = Math.max(tSim, Math.max(Names.simName(vt, a), low.indexOf(a.toLowerCase()) !== -1 ? 0.9 : 0) * 0.95);
     s += tSim * 6;
     if (tSim < 0.5) s -= 10;                       // another song's video, however well it fits otherwise
     if (want.anime && Names.simName(Names.anime(v.title) || '', want.anime) >= 0.6) s += 3;   // asked by the anime: its own opening or ending video
     if (want.artist) s += Math.max(Names.simName(ch, want.artist), title.toLowerCase().indexOf(want.artist.toLowerCase()) !== -1 ? 0.8 : 0) * 4;
     const own = want.artist && (Names.simName(ch, want.artist) >= 0.8 || Names.simName(Names.channel(String(v.channel || '').replace(/\s*-\s*topic$/i, '')), want.artist) >= 0.8);
-    if (own) s += /-\s*topic$/i.test(v.channel) ? 2 : 3;                 // the artist's channel (Topic: the official audio)
+    if (own) s += /-\s*topic$/i.test(v.channel) ? 2 : tSim >= 0.8 ? 5 : 3;   // the artist's channel (Topic: the official audio)
     else if (/vevo$/i.test(v.channel || '')) s += 2;
     else if (this.NOT_ARTIST_CH.test(v.channel || '') && tSim >= 0.8) s += 1;   // a label or the anime's studio
     if (Names.LYRICVID.test(title)) s -= 4;
@@ -16401,12 +16420,13 @@ const Maker = {
     const vArtist = v => Names.split(v.title, v.channel).artist || Names.channel(v.channel);
     // only an artist named ("YOASOBI", "songs by LiSA"): YouTube's results are that artist's songs
     if (!list && req.kind === 'text' && !want.anime) {
-      const top = vids.slice(0, 8), byName = top.filter(v => Names.sameName(vArtist(v), want.text)).length;
+      const top = vids.slice(0, 8), byName = top.filter(v => Names.sameName(vArtist(v), want.text) || Names.sameName(Names.channel(v.channel), want.text)).length;
       const asSong = top.filter(v => Names.sameName(Names.split(v.title, v.channel).title, want.text)).length + (groups.some(g => (g.names || []).some(t => Names.sameName(t, want.text)) && g.jp >= 0.5 && g.rows.length >= 3) ? 2 : 0);
       const who = want.artistOnly ? want.artist : want.bare && byName >= 2 && byName > asSong ? want.text : '';
+      if (who && !want.artistOnly) { try { const mv = await YT.search(who + ' MV'); if (mv.length) vids = mv.concat(vids.filter(v => !mv.some(x => x.id === v.id))); } catch (e) {} }   // their music videos, not vlogs
       if (who) {
         const cased = /[a-z]/.test(who) && /[A-Z]/.test(who), raw = x => String(x || '').replace(/\s+/g, '');
-        const theirs = v => cased ? raw(vArtist(v)).indexOf(raw(who)) !== -1 || raw(v.channel).indexOf(raw(who)) !== -1 || raw(v.title).indexOf(raw(who)) !== -1 : Names.simName(vArtist(v), who) >= 0.8;
+        const theirs = v => cased ? raw(vArtist(v)).indexOf(raw(who)) !== -1 || raw(v.channel).indexOf(raw(who)) !== -1 || raw(v.title).indexOf(raw(who)) !== -1 : Names.simName(vArtist(v), who) >= 0.8 || Names.sameName(Names.channel(v.channel), who);
         list = { by: 'artist', name: who, vids: vids.filter(v => theirs(v) && !Names.VERSION.test(v.title) && !Names.FANEDIT.test(v.title)), ask: 'Which ' + who + ' song?' };
       }
     }
@@ -16465,9 +16485,20 @@ const Maker = {
     }
     if (group && !chosen && ranked[0] && ranked[0].s < 3 && !asl) { R.notes.push('weak LRCLIB match ' + ranked[0].s.toFixed(1)); group = null; }
     if (group) { want.title = want.title && req.kind !== 'text' ? want.title : group.title || want.title; if (!want.artist || req.kind === 'text') want.artist = group.artist || want.artist; if (req.kind === 'yt' && group.title) want.title = group.title; }
+    // what the videos call it: romaji and English names, the anime; for a Japanese title with none, ask YouTube once more
+    let learned = { aliases: [], anime: '' };
+    if (group && req.kind !== 'yt') {
+      const skip = [want.artist, group.artist].concat(group.artists.slice(0, 3));
+      learned = this.learn(vids, group.title, skip);
+      if (!learned.aliases.length && JP.hasJapanese(group.title)) {
+        try { const more = await YT.search([group.artist, group.title].filter(Boolean).join(' ')); vids = vids.concat(more.filter(v => !vids.some(x => x.id === v.id))); learned = this.learn(vids, group.title, skip); } catch (e) {}
+      }
+      if (learned.aliases.length) { want.romaji = uniq((want.romaji || []).concat(learned.aliases)); R.notes.push('also called ' + learned.aliases.join(', ')); }
+      if (!want.anime && learned.anime) want.animeSeen = learned.anime;
+    }
     // the lyrics page (English) for the same song
     if (!asl) {
-      try { asl = await this.aslFind([want], group ? group.sig : null); } catch (e) { R.notes.push('animesonglyrics: ' + (e.message || e)); }
+      try { asl = await this.aslFind([Object.assign({}, want, { anime: want.anime || want.animeSeen || '' })], group ? group.sig : null); } catch (e) { R.notes.push('animesonglyrics: ' + (e.message || e)); }
       if (asl && !group && asl.artist) { try { const g2 = await this.lrcFind([{ title: asl.title, artist: asl.artist, romaji: [asl.title] }]); const sig = Names.lyricSig(asl.kanji); group = g2.find(g => Names.overlap(g.sig, sig) >= 0.5) || null; } catch (e) {} }
     }
     if (!group && !asl) throw new Error('No Japanese lyrics were found for “' + (want.title || req.text) + '”. Try the title in Japanese, add the artist, or paste the YouTube link.');
@@ -16479,12 +16510,14 @@ const Maker = {
     /* 3. the video and the timing, chosen together */
     step('video', 'work', 'Choosing the video…');
     if (!video) {
-      const fitWant = { title: songTitle, artist, version: want.version, anime: req.kind === 'text' && want.theme ? want.anime : '' };
+      const fitWant = { title: songTitle, artist, version: want.version, anime: req.kind === 'text' && want.theme ? want.anime : '', alts: learned.aliases.concat(asl && asl.title && !JP.hasJapanese(asl.title) ? [asl.title] : []) };
       if (asl && asl.yt && !vids.some(v => v.id === asl.yt.id)) vids.unshift({ id: asl.yt.id, title: songTitle, channel: '', duration: 0, views: 0, fromPage: true });
       const score = list => list.map(v => ({ v, s: this.scoreVideo(v, fitWant, group) + (asl && asl.yt && v.id === asl.yt.id ? 2 : 0) })).sort((a, b) => b.s - a.s);
       let scored = score(vids);
-      if ((!scored.length || scored[0].s < 12) && req.kind !== 'yt') {
+      const ownVideo = x => x && Names.simName(Names.channel(x.v.channel), artist || '\u0000') >= 0.8 && x.s >= 14;
+      if ((!scored.length || !ownVideo(scored[0])) && req.kind !== 'yt' && !R.searchedAgain) {
         try {
+          R.searchedAgain = true;
           const more = await YT.search([artist, songTitle].filter(Boolean).join(' '));
           vids = vids.concat(more.filter(v => !vids.some(x => x.id === v.id)));
           scored = score(vids); R.notes.push('video search for “' + songTitle + '”');
@@ -21612,13 +21645,13 @@ Views.make = {
   },
   doneEl() {
     const M = this.M, m = Lib.get(M.id); if (!m) return h('p', 'The lesson was made but cannot be found. Look in the Library.');
-    const bg = Maker._bg && Maker._bg.has(m.id);
+    const bg = Maker._bg && Maker._bg.has(m.id), fromDisk = location.protocol === 'file:';
     const thumb = m.yt ? h('img.find-thumb', { src: 'https://i.ytimg.com/vi/' + m.yt + '/mqdefault.jpg', alt: '', loading: 'lazy', onerror: e => e.target.remove() }) : h('div.find-thumb.none', '♪');
     const acts = h('div.btn-row',
       btn('Start stage 1', { cls: 'primary', icon: 'play', onclick: () => App.go('theater', { id: m.id, mode: 'learn', n: 0 }) }),
       isTimed(m) ? btn('Watch it first', { icon: 'eye', onclick: () => App.go('theater', { id: m.id, mode: 'watch' }) }) : null,
       btn('Lesson map', { cls: 'ghost', onclick: () => App.go('media', { id: m.id }) }),
-      (m.fileName || m.yt) ? btn('Play in the background', { cls: 'ghost', icon: 'music', onclick: () => Bgm.start(m.id) }) : null,
+      (m.fileName || (m.yt && !fromDisk)) ? btn('Play in the background', { cls: 'ghost', icon: 'music', onclick: () => Bgm.start(m.id) }) : null,
       btn('Make another', { cls: 'ghost', icon: 'plus', onclick: () => { this.M = { q: '', busy: false, steps: {}, err: '', opts: null, r: null, id: null }; this.draw(); } }));
     return h('section.make-done',
       h('div.make-song', thumb, h('div', h('h2', { lang: 'ja' }, m.title), h('p.sub', [m.artist, m.anime, m.theme].filter(Boolean).join(' · ')),
@@ -21626,7 +21659,7 @@ Views.make = {
           h('li', h('b', String(m.lines.length)), ' lines' + (isTimed(m) ? ', timed: the words light up with the music' : ', not timed yet: tap along once in Watch')),
           h('li', m.lines.filter(l => l.en).length ? '✓ ' + m.lines.filter(l => l.en).length + ' lines with a person’s translation' : '✗ No translation online'),
           bg ? h('li', h('span.spin'), ' ' + AI.name() + ' is translating the other lines in the background') : null,
-          h('li', m.fileName ? '✓ Your own file plays, also offline' : m.yt ? '✓ The video streams from YouTube (needs the internet)' : '✗ No video: the voice reads the lines'),
+          h('li', m.fileName ? '✓ Your own file plays, also offline' : m.yt && fromDisk ? '✗ YouTube does not play in a page opened from disk: for the video, open this lesson in the phone app (xravia.github.io/kotonoha), or put the song in your media folder' : m.yt ? '✓ The video streams from YouTube (needs the internet)' : '✗ No video: the voice reads the lines'),
           h('li', '✓ Words, readings, grammar and translations are saved on this device')))),
       m.plan ? Plan.card(m, { actions: acts }) : acts);
   },
