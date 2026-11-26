@@ -15992,6 +15992,11 @@ const Tube = {
       if (page.status === 'fulfilled') {
         const html = page.value, pr = this.objectAfter(html, 'ytInitialPlayerResponse'), vd = pr && pr.videoDetails;
         if (vd) { out.title = out.title || vd.title || ''; out.channel = out.channel || vd.author || ''; out.duration = +vd.lengthSeconds || 0; }
+        // whether it may play inside another site (the game): some owners allow it only on YouTube itself
+        const ps = pr && pr.playabilityStatus;
+        if (ps && ps.playableInEmbed === false) out.embed = false;
+        else if (ps && ps.playableInEmbed === true) out.embed = true;
+        else if (/"playableInEmbed":false/.test(html)) out.embed = false;
         if (!out.duration) { const m = /"lengthSeconds":"(\d+)"/.exec(html); if (m) out.duration = +m[1]; }
         if (!out.title) { const m = /<title>([^<]*)<\/title>/.exec(html); if (m) out.title = m[1].replace(/\s*-\s*YouTube\s*$/, ''); }
       }
@@ -16751,6 +16756,19 @@ const Maker = {
         } catch (e) { R.notes.push('video search: ' + (e.message || e)); }
       }
       if (scored.length && scored[0].s > 2) { video = Object.assign({}, scored[0].v); video.start = video.fromPage ? (asl.yt.start || 0) : 0; }
+      // the video has to play inside the game: an owner who allows it only on YouTube itself means the next good one
+      if (video) {
+        let inf = null; try { inf = await Tube.info(video.id); } catch (e) {}
+        if (inf && inf.embed === false) {
+          R.notes.push('“' + video.title + '” plays only on YouTube itself');
+          let alt = null;
+          for (const x of scored.filter(x => x.v.id !== video.id && x.s > 2 && x.s >= scored[0].s - 8).slice(0, 4)) {
+            let i2 = null; try { i2 = await Tube.info(x.v.id); } catch (e) {}
+            if (i2 && i2.embed !== false) { alt = Object.assign({}, x.v, { start: 0, duration: x.v.duration || i2.duration }); break; }
+          }
+          if (alt) { R.notes.push('took “' + alt.title + '”, which plays inside the game'); video = alt; }
+        }
+      }
       if (video && !video.duration) { try { const inf = await Tube.info(video.id); video.duration = inf.duration; video.title = video.title || inf.title; video.channel = video.channel || inf.channel; } catch (e) {} }
       // timed lyrics exist only for another length (often the anime's TV size): a good video of that length keeps the words in time
       if (video && group && video.duration && !video.fromPage) {
@@ -16825,6 +16843,22 @@ const Maker = {
     R.lesson = m.id;
     if (later && AI.available()) this.translateLater(m);
     return R;
+  },
+  /** The lesson's video may only play on YouTube itself: another upload of the same song that plays inside the game
+      (the artist's audio-only "Topic" upload, a label's upload), as near the timing's length as can be found. */
+  async altVideo(m) {
+    const want = { title: m.title, artist: m.artist || '', alts: [m.titleEn].filter(Boolean), romaji: [] };
+    let vids = [];
+    try { vids = await Tube.search([m.artist, m.title].filter(Boolean).join(' ')); } catch (e) { return null; }
+    const target = m.lrcDur || 0, tried = new Set([m.yt].concat(m.ytTried || []));
+    const cands = vids.filter(v => !tried.has(v.id)).map(v => ({ v, s: this.scoreVideo(v, want, null) - (target && v.duration ? Math.min(6, Math.abs(v.duration - target) / 5) : 0) }))
+      .filter(x => x.s > 3).sort((a, b) => b.s - a.s).slice(0, 5);
+    for (const c of cands) {
+      let inf = null; try { inf = await Tube.info(c.v.id); } catch (e) {}
+      if (inf && inf.embed === false) continue;
+      return Object.assign({}, c.v, { duration: c.v.duration || (inf && inf.duration) || 0 });
+    }
+    return null;
   },
   /** A lesson from a song file the learner has, with no video: its tags (or its name) say which song; LRCLIB's entry of
       the file's own length gives the lyrics timed to it; the English comes from animesonglyrics.com when it has the
@@ -21671,7 +21705,13 @@ Views.theater = {
     this.T.offs.push(Bus.on('offline', st => { if (this.T === T && st === 'ready') this.loadDocs(); else if (this.T === T) this.drawPanel(); }));
     this.T.offs.push(Bus.on('player', () => { if (this.T === T) this.drawCtl(); }));
     this.T.offs.push(Bus.on('local', () => { if (this.T !== T || T.deepening == null) return; const b = $('.deepen-run b'); if (b && Local.state !== 'ready') b.textContent = AI.Name() + ' is reading stage ' + (T.deepening + 1) + '… ' + (Local.state === 'downloading' ? 'Downloading Kotohana' : 'Starting Kotohana') + ' (' + Math.round(Local.progress * 100) + '%)… '; }));
-    this.T.offs.push(Bus.on('player-error', id => { if (this.T === T && id === T.m.id) { this.drawScreen(); this.drawCtl(); } }));
+    this.T.offs.push(Bus.on('player-error', id => {
+      if (this.T !== T || id !== T.m.id) return;
+      const err = Player.ytError() || {};
+      // its owner lets the video play only on YouTube itself: find another upload of the song that plays here
+      if (Player.isYouTube(id) && (err.code === 101 || err.code === 150) && !T.altTried && Views.make.available()) { T.altTried = true; this.findAlt(); }
+      this.drawScreen(); this.drawCtl();
+    }));
     this.T.offs.push(Bus.on('folder', () => { if (this.T === T && !Player.has(m.id)) this.attachMedia(); }));
     this._ended = () => { if (this.T === T) this.onEnded(); };
     Player.el.addEventListener('ended', this._ended);
@@ -21717,6 +21757,26 @@ Views.theater = {
   hasMedia() { const m = this.T.m; return Player.has(m.id) && !Player.broken.has(m.id); },
   synced() { return this.hasMedia() && isTimed(this.T.m); },
   canHear() { return this.hasMedia() || Voice.available(); },
+  /** Another upload of the song that plays inside the game (the artist's audio upload, say), in place of a video its
+      owner keeps on YouTube itself. */
+  async findAlt() {
+    const T = this.T, m = T.m;
+    T.altBusy = true; this.drawScreen();
+    let v = null;
+    try { v = await Maker.altVideo(m); } catch (e) { console.warn('another video', e); }
+    T.altBusy = false;
+    if (this.T !== T) return;
+    if (!v) { this.drawScreen(); return; }
+    m.ytTried = uniq((m.ytTried || []).concat([m.yt]));
+    m.yt = v.id; m.ytStart = 0; if (v.duration) m.ytDur = v.duration;
+    if (m.ytOffset != null) { m.ytOffset = 0; m.ytOffsetSet = 0; } else if (!Shelf.own(m)) { m.offset = 0; m.offsetSet = 0; }
+    m.timingOff = 0;
+    await Lib.saveContent(m); await Lib.save(m);
+    Player.attachYT(m.id, m.yt, m.title, 0);
+    await this.attachMedia();
+    this.drawScreen(); this.drawCtl();
+    toast('The official video plays only on YouTube itself, so another upload of the song plays here: “' + v.title + '”.', 'good');
+  },
   async attachMedia() {
     const T = this.T, m = T.m;
     const ok = await Player.ensure(m);
@@ -21797,6 +21857,8 @@ Views.theater = {
       Shelf.pickFor(m, f).then(r => { if (r && r.fit && r.fit.moved) toast('The lines were re-timed to fit your file.', 'good'); }).catch(err => toast(String(err.message || err), 'bad')).then(() => this.attachMedia());
     } });
     const ytBroken = Player.broken.has(m.id) && Player.isYouTube(m.id);
+    if (ytBroken && T.altBusy) return h('div.th-nomedia', h('p.th-np-title', 'Finding a version that plays here…'),
+      h('p.sub', 'The owner of this video lets it play only on YouTube itself, so the game is looking for another upload of the song (the artist’s audio upload, say).'), h('div.th-eq', [1, 2, 3, 4, 5].map(i => h('i'))));
     const kids = [h('p.th-np-title', m.sample ? 'This sample has no recording' : ytBroken ? 'The music video cannot play here' : Player.broken.has(m.id) ? 'This browser cannot play that file' : m.fileName ? 'Where is “' + m.fileName + '”?' : 'No audio or video attached')];
     if (m.sample) kids.push(h('p.sub', 'A synthetic voice reads each line. Your own songs and episodes play right here.'));
     else if (ytBroken) {
