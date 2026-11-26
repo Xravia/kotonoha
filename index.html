@@ -19107,6 +19107,7 @@ const Player = {
         this.el.setBackend(this.video);
         this.video.src = f.url; try { this.video.load(); } catch (e) {}
       }
+      Vocals.drop();
     }
     return true;
   },
@@ -19120,6 +19121,7 @@ const Player = {
     if (!this.use(id)) return false;
     this._endSeg(true);
     Voice.stop();
+    Vocals.wake(); Vocals.hold(true);                 // a clip is for hearing the singer, even in Karaoke
     const start = Math.max(0, a - 0.12), end = Math.max(start + 0.3, b + 0.18);
     const seg = this._seg = { start, end, loop: !!o.loop, onEnd: o.onEnd, onError: o.onError };
     this.el.playbackRate = o.rate || 1;
@@ -19146,6 +19148,7 @@ const Player = {
     const seg = this._seg;
     cancelAnimationFrame(this._raf);
     this._seg = null;
+    Vocals.hold(false);
     if (this.el && !this.el.paused) { try { this.el.pause(); } catch (e) {} }
     if (seg && !silent && seg.onEnd) seg.onEnd();
   },
@@ -19153,6 +19156,7 @@ const Player = {
   playFrom(id, t, rate) {
     if (!this.use(id)) return false;
     this._endSeg(true);
+    Vocals.wake();
     this.el.playbackRate = rate || 1;
     const go = () => { try { this.el.currentTime = Math.max(0, t || 0); } catch (e) {} const p = this.el.play(); if (p && p.catch) p.catch(() => {}); };
     if (this.el.readyState >= 1) go(); else this.el.addEventListener('loadedmetadata', go, { once: true });
@@ -19208,8 +19212,165 @@ const Player = {
     this._finding = { id: m.id, p };
     try { return await p; } finally { if (this._finding && this._finding.p === p) this._finding = null; }
   },
+  /** Open a lesson's media again from the start of the search (the media folder was just connected, say). */
+  reopen(m) {
+    const f = this.files.get(m.id);
+    if (f && f.url && !f.byUrl) { try { URL.revokeObjectURL(f.url); } catch (e) {} }
+    this.files.delete(m.id); this.broken.delete(m.id);
+    if (this.cur === m.id) { this._endSeg(true); this.cur = null; }
+    return this.ensure(m);
+  },
   /** Put the video element into a visible slot (study screen) or back into hiding. */
   dock(slot) { (slot || $('#player-holder')).appendChild(this.el.node); }
+};
+
+/* ===== 65-sing.js ===== */
+/* ---------- 65-sing: the singer up or down, for singing along (Watch) ----------
+   With the learner's own file the lesson can take the singer out (Karaoke) or keep them quietly leading (Guide).
+   Most records put the lead voice in the middle of the stereo picture, so the middle is turned down across the
+   voice's range while the bass, the kick and the cymbals in the middle stay, and so does everything placed left or
+   right. At Original the sound comes out exactly as recorded.
+   The sound passes through the browser's audio graph on a second media element, swapped in only while the singer is
+   turned down. The element the game plays everything else with never goes through the graph: a file the copy on
+   disk plays by its address would come out silent there. A YouTube video's sound stays inside YouTube's player, so
+   it cannot be changed. */
+'use strict';
+
+const VOCAL_LEVELS = [[1, 'Original', 'The song as recorded'], [0.3, 'Guide', 'The singer quietly, to lead you'], [0, 'Karaoke', 'The singer taken out, as far as the recording allows']];
+
+const Vocals = {
+  ctx: null, n: null, el: null, level: 1, held: false, mono: new Set(), _monoT: 0, _wakeT: 0,
+
+  supported() { return typeof window !== 'undefined' && !!(window.AudioContext || window.webkitAudioContext); },
+  /** Can the singer be turned down for this lesson's media? Only a file read into the page (or served by the game's
+      own address): not a YouTube video, and not a file the copy on disk plays by its address. */
+  can(id) {
+    if (!this.supported()) return false;
+    const f = Player.info(id);
+    if (!f || f.yt || !f.url || Player.broken.has(id)) return false;
+    if (/^blob:/.test(f.url)) return true;
+    try { const u = new URL(f.url, location.href); return /^https?:$/.test(u.protocol) && u.origin === location.origin; } catch (e) { return false; }
+  },
+  /** Is the karaoke element the one playing now? */
+  active() { return !!this.el && !!Player.el && Player.el.b === this.el; },
+
+  graph() {
+    if (this.n) return this.n;
+    const AC = window.AudioContext || window.webkitAudioContext, ctx = this.ctx = new AC();
+    const gain = v => { const g = ctx.createGain(); g.gain.value = v; return g; };
+    const filt = (type, hz) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = hz; b.Q.value = 0.707; return b; };
+    const src = ctx.createMediaElementSource(this.el);
+    const up = gain(1); up.channelCount = 2; up.channelCountMode = 'explicit'; up.channelInterpretation = 'speakers';   // a mono file: both sides
+    const sp = ctx.createChannelSplitter(2), mg = ctx.createChannelMerger(2);
+    src.connect(up); up.connect(sp);
+    // middle = (L + R) / 2, sides = (L − R) / 2; L = middle + sides, R = middle − sides
+    const mid = gain(0.5); sp.connect(mid, 0); sp.connect(mid, 1);
+    const sl = gain(0.5), sr = gain(-0.5), side = gain(1); sp.connect(sl, 0); sp.connect(sr, 1); sl.connect(side); sr.connect(side);
+    const aMid = ctx.createAnalyser(), aSide = ctx.createAnalyser(); aMid.fftSize = aSide.fftSize = 2048;
+    mid.connect(aMid); side.connect(aSide);
+    // the middle at the chosen level, plus what lies below and above the voice at full level when the singer goes down
+    const all = gain(1), keep = gain(0);
+    const lo1 = filt('lowpass', 170), lo2 = filt('lowpass', 170), hi1 = filt('highpass', 7000), hi2 = filt('highpass', 7000);
+    aMid.connect(all); aMid.connect(lo1); lo1.connect(lo2); lo2.connect(keep); aMid.connect(hi1); hi1.connect(hi2); hi2.connect(keep);
+    const mid2 = gain(1); all.connect(mid2); keep.connect(mid2);
+    // the sides go back left as they are and right turned over, which rebuilds the song exactly. With the singer out,
+    // the right gets them the same way up instead: a phone speaker that adds left and right would otherwise cancel them
+    const rs = gain(-1); aSide.connect(rs);
+    mid2.connect(mg, 0, 0); mid2.connect(mg, 0, 1); aSide.connect(mg, 0, 0); rs.connect(mg, 0, 1);
+    const out = gain(1); mg.connect(out); out.connect(ctx.destination);
+    return (this.n = { all, keep, rs, out, aMid, aSide });
+  },
+  apply() {
+    if (!this.n) return;
+    const v = this.held ? 1 : this.level, t = this.ctx.currentTime;
+    this.n.all.gain.setTargetAtTime(v, t, 0.03);
+    this.n.keep.gain.setTargetAtTime(1 - v, t, 0.03);
+    this.n.rs.gain.setTargetAtTime(v < 0.15 ? 1 : -1, t, 0.03);
+  },
+
+  /** How loud the singer is: 1, 0.3 or 0. Call from a click: browsers start the audio graph only then. */
+  set(level) {
+    if (level >= 1 && !this.active()) { this.level = 1; return true; }
+    const id = Player.cur;
+    if (!id || !this.can(id)) return false;
+    this.level = level;
+    if (!this.active()) this.take();
+    this.wake(); this.apply();
+    if (level < 1) this.checkMono(id);
+    Bus.emit('vocals', 'level');
+    return true;
+  },
+  /** Swap the karaoke element in, at the same moment of the song, playing if the song was playing. */
+  take() {
+    const P = Player, f = P.info(P.cur), plain = P.video;
+    if (!this.el) {
+      this.el = h('video.player-el', { playsInline: true, preload: 'auto' });
+      this.el.addEventListener('play', () => this.wake());
+    }
+    const k = this.el;
+    this.graph();
+    const t = plain.currentTime || 0, playing = !plain.paused && !plain.ended;
+    if (k.getAttribute('src') !== f.url) k.src = f.url;
+    k.playbackRate = plain.playbackRate || 1; k.controls = plain.controls; k.volume = plain.volume;
+    P.el.setBackend(k);
+    const go = () => { try { k.currentTime = t; } catch (e) {} if (playing) { const p = k.play(); if (p && p.catch) p.catch(() => {}); } };
+    if (k.readyState >= 1) go(); else k.addEventListener('loadedmetadata', go, { once: true });
+  },
+  /** Back to the plain element with the singer as recorded (leaving Watch or the lesson). */
+  release() {
+    this.level = 1; this.held = false; clearTimeout(this._wakeT);
+    if (!this.active()) { this.apply(); return; }
+    const P = Player, k = this.el, plain = P.video, t = k.currentTime || 0, playing = !k.paused && !k.ended;
+    plain.playbackRate = k.playbackRate || 1; plain.controls = k.controls;
+    P.el.setBackend(plain);
+    const go = () => { try { plain.currentTime = t; } catch (e) {} if (playing) { const p = plain.play(); if (p && p.catch) p.catch(() => {}); } };
+    if (plain.readyState >= 1) go(); else plain.addEventListener('loadedmetadata', go, { once: true });
+    this.apply();
+    Bus.emit('vocals', 'level');
+  },
+  /** Another lesson's media is loading: forget this one's. */
+  drop() {
+    this.level = 1; this.held = false; clearTimeout(this._wakeT);
+    if (this.el && !this.active() && this.el.getAttribute('src')) { try { this.el.pause(); this.el.removeAttribute('src'); this.el.load(); } catch (e) {} }
+    this.apply();
+  },
+  /** A clip of a line or a word is for hearing the singer: full voice while it plays. */
+  hold(on) { on = !!on; if (this.held === on) return; this.held = on; this.apply(); },
+  /** Before playing: a stopped audio graph would play the song silently. If it will not start, the plain element
+      takes over with the singer back, rather than silence. */
+  wake() {
+    if (!this.ctx || !this.active() || this.ctx.state === 'running') return;
+    try { const p = this.ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+    clearTimeout(this._wakeT);
+    this._wakeT = setTimeout(() => {
+      if (this.ctx && this.ctx.state !== 'running' && this.active()) { this.release(); toast('Karaoke stopped because the browser held the sound back. Choose it again to sing without the singer.'); }
+    }, 900);
+  },
+  /** A mono recording has no middle to take out: the band goes with the singer. Listen for a few seconds and say so. */
+  checkMono(id) {
+    if (this._monoT || this.mono.has(id)) return;
+    const n = this.n, bm = new Float32Array(n.aMid.fftSize), bs = new Float32Array(n.aSide.fftSize);
+    let mid = 0, side = 0, k = 0;
+    const tick = () => {
+      if (!this.active() || this.level >= 1 || Player.cur !== id) { this._monoT = 0; return; }
+      if (Player.isPlaying()) {
+        n.aMid.getFloatTimeDomainData(bm); n.aSide.getFloatTimeDomainData(bs);
+        let a = 0, b = 0; for (let i = 0; i < bm.length; i++) { a += bm[i] * bm[i]; b += bs[i] * bs[i]; }
+        if (a > 1e-6) { mid += a; side += b; k++; }
+      }
+      if (k >= 12) {
+        this._monoT = 0;
+        if (side / mid < 0.003) {
+          this.mono.add(id);
+          toast('This recording is mono: the singer and the band share the middle, so Karaoke quiets both. Guide works better with it.');
+          Bus.emit('vocals', 'mono');
+        }
+        return;
+      }
+      this._monoT = setTimeout(tick, 250);
+    };
+    this._monoT = setTimeout(tick, 250);
+  }
 };
 
 /* ===== 66-bgm.js ===== */
@@ -21713,6 +21874,7 @@ Views.theater = {
       this.drawScreen(); this.drawCtl();
     }));
     this.T.offs.push(Bus.on('folder', () => { if (this.T === T && !Player.has(m.id)) this.attachMedia(); }));
+    this.T.offs.push(Bus.on('vocals', what => { if (this.T !== T) return; this.drawCtl(); if (what === 'mono' && T.mode === 'watch') this.drawPanel(); }));
     this._ended = () => { if (this.T === T) this.onEnded(); };
     Player.el.addEventListener('ended', this._ended);
     this._meta = () => { if (this.T === T) { this.drawTime(); if (T.mode === 'watch' && this.timingDoubt() && !T._doubtShown) { T._doubtShown = true; this.drawPanel(); } } };
@@ -21735,6 +21897,7 @@ Views.theater = {
     this.flushIm();
     if (T.play && T.play.phase === 'run') T.play.phase = 'quit';
     Player.pause(); Voice.stop(); Mic.stop();
+    Vocals.release();
     Player.el.controls = false;
     Player.setRate(1);
     Player.dock(null);
@@ -21998,9 +22161,11 @@ Views.theater = {
         btn('', { cls: 'icon-btn', icon: 'next', aria: 'Next line', title: 'Next line (→)', disabled: li >= m.lines.length - 1, onclick: () => this.learnGo(li + 1, true) }),
         btn('Loop', { cls: 'small' + (T.loopLine ? ' on' : ''), icon: 'loop', title: 'Repeat the line until you stop it', disabled: !this.hasMedia() || m.lines[li].a == null, onclick: () => { T.loopLine = !T.loopLine; if (T.loopLine) this.playLineAt(li, { rate: T.rate, loop: true }); else Player.pause(); this.drawCtl(); } })));
     }
+    const voc = T.mode === 'watch' && Vocals.can(m.id) ? h('div.seg.th-voc', { role: 'radiogroup', 'aria-label': 'Singer' }, VOCAL_LEVELS.map(([v, label, title]) =>
+      h('button.seg-btn' + (Vocals.level === v ? '.on' : ''), { type: 'button', role: 'radio', 'aria-checked': Vocals.level === v ? 'true' : 'false', title, onclick: () => { if (!Vocals.set(v)) toast('The singer can be turned down only with the song’s own file.'); this.drawCtl(); } }, label))) : null;
     kids.push(h('div.th-opts',
       has ? h('div.seg.th-rate', { role: 'radiogroup', 'aria-label': 'Speed' }, rateB(1, '1×'), rateB(0.85, '0.85×'), rateB(0.7, '0.7×')) : null,
-      textSeg));
+      voc, textSeg));
     mount(box, kids);
   },
   setText(id) { const T = this.T; T.text = id; T.veilOpen.clear(); Game.p.settings.thText = id; Game.touch(); T.drawnFocus = -9; this.drawLines(); this.drawCtl(); },
@@ -22129,6 +22294,7 @@ Views.theater = {
     if (T.play && T.play.phase === 'run') T.play.phase = 'quit';
     T.play = null;
     Player.pause(); Voice.stop(); Mic.stop();
+    if (mode !== 'watch') Vocals.release();
     T.mode = mode; m.lastMode = mode; Lib.save(m);
     T.loopLine = false; T.loopAt = null;
     Player.el.controls = mode === 'watch' && this.hasMedia();
@@ -22213,9 +22379,38 @@ Views.theater = {
       h('section.block#th-rate', h('h3', 'How much did you understand?'),
         h('div.rate-row', [[0, 'Almost nothing'], [25, 'A few words'], [50, 'About half'], [75, 'Most of it'], [100, 'Everything']].map(([v, l]) => btn(l, { cls: 'small', onclick: () => rate(v) }))),
         hist.length ? h('p.th-hist', h('span.tag', 'Your history'), hist.map((x, i) => h('span.th-h' + (i === hist.length - 1 ? '.last' : ''), x.v + '%'))) : h('p.fine', 'Rate after each watch. The numbers rising over the weeks are your proof of progress.')),
+      this.singBlock(),
       h('section.block', h('h3', 'Lyrics'), h('p.fine', 'Switch to 隠す to hide the words and train your ears; click a hidden line to peek. Shortcuts: Space play or pause, ← → lines, L repeat line.')),
       h('div.btn-row', btn('Learn it line by line', { cls: 'primary', onclick: () => this.setMode('learn') }), btn('Play along', { onclick: () => this.setMode('play') }))
     ];
+  },
+  /** Singing along: Karaoke and Guide with the song's own file; how to get there from a music video or a file the
+      copy on disk plays by its address. */
+  singBlock() {
+    const T = this.T, m = T.m;
+    if (!this.hasMedia() || m.sample || !Vocals.supported()) return null;
+    const head = h('h3', duo('歌う', 'Sing it'));
+    if (Vocals.can(m.id)) return h('section.block.th-sing', head,
+      h('p.fine', 'Under the lyrics, Karaoke takes the singer out (as far as the recording allows) and Guide keeps them quietly leading. Sing each word as it lights up; Repeat line (L) drills a hard one, and 0.85× gives you time.'),
+      Vocals.mono.has(m.id) ? h('p.fine', 'This recording is mono, so Guide works better than Karaoke here.') : null);
+    const pick = h('input.visually-hidden', { type: 'file', id: 'th-pick-sing', accept: 'audio/*,video/*,.mkv,.mp3,.m4a,.flac,.ogg,.opus,.wav,.mp4,.webm,.mov,.zip', onchange: e => {
+      const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+      Shelf.pickFor(m, f).then(r => { if (r && r.fit && r.fit.moved) toast('The lines were re-timed to fit your file.', 'good'); }).catch(err => toast(String(err.message || err), 'bad')).then(() => this.attachMedia());
+    } });
+    if (Player.isYouTube(m.id)) {
+      const more = h('div.th-np-more');
+      return h('section.block.th-sing', head,
+        h('p.fine', 'Karaoke needs the song’s own file. With it the singer can be taken out, and the song plays without YouTube: no ads, no buffering, offline too. Files in your media folder are attached by themselves.'),
+        h('div.btn-row', h('label.btn.small', { for: 'th-pick-sing' }, icon('upload', 14), h('span', 'Add the song file')), pick,
+          btn('Get the song', { cls: 'small ghost', icon: 'download', onclick: () => mount(more, more.firstChild ? null : storeLinks(m)) })), more);
+    }
+    // the copy opened from disk plays this file by its address: the page may play it but not listen to it
+    if (Folder.supported() && !Folder.connected()) return h('section.block.th-sing', head,
+      h('p.fine', 'For Karaoke the game has to open the song itself: connect your media folder (the one with your songs) once.'),
+      h('div.btn-row', btn('Connect my media folder', { cls: 'small', icon: 'upload', onclick: async () => { try { if (Folder.handle) await Folder.reconnect(); else await Folder.connect(); } catch (e) {} if (this.T === T && Folder.connected()) { await Player.reopen(m); this.attachMedia(); } } })));
+    return h('section.block.th-sing', head,
+      h('p.fine', 'For Karaoke the game has to open the song itself: choose its file.'),
+      h('div.btn-row', h('label.btn.small', { for: 'th-pick-sing' }, icon('upload', 14), h('span', 'Choose the song file')), pick));
   },
   syncCard() {
     const m = this.T.m, done = m.lines.filter(l => l.a != null).length;
@@ -24729,6 +24924,11 @@ Views.guide = {
         h('li', h('b', 'Add the files. '), 'Saved songs > Add song files: choose any number of songs, videos or album ZIPs. Each is matched to its lesson by its tags (title, artist, length) and its name, copied into your media folder (or kept in this browser), and the lines are re-timed to fit it if its length differs from the video’s. Tracks without a lesson go into your media folder, ready to make lessons from.'),
         h('li', h('b', 'Or just drop them in. '), 'Save downloads into your media folder: when you come back to the game, new songs (and album ZIPs) there attach to their lessons by themselves.'),
         h('li', h('b', 'Word by word. '), 'With the song’s own file, the game listens to the singing and times every word (about 10–30 seconds, in the background). In Watch each word lights up as it is sung, and a word’s card has “In the song” to hear just that word. Not right on a line? “Tap the words”: the line plays slower and you tap as each word starts.'))));
+    page.appendChild(h('section', h('h2', duo('歌う', 'Sing along')),
+      h('ul.plain',
+        h('li', h('b', 'Karaoke and Guide. '), 'With the song’s own file, Watch has Original · Guide · Karaoke under the lyrics. Karaoke takes the singer out as far as the recording allows: most records put the lead voice in the middle, so the middle is turned down across the voice’s range while the bass, the drums and everything placed left or right stay. Guide keeps the singer quietly leading. A clip of a line or a word always plays with the singer.'),
+        h('li', h('b', 'How to practise. '), 'Sing each word as it lights up. Repeat line (L) drills a hard one, 0.85× gives you time, and once you know it, hide the lyrics (隠す) and sing from memory.'),
+        BUILD.local ? h('li', h('b', 'No ads. '), 'Kotonoha has no ads and earns nothing from YouTube. A lesson made from a music video plays it in YouTube’s own player, and YouTube may put its ads on a video there; no site that shows YouTube videos can turn them off. The song’s own file has none (and no buffering), and neither does YouTube for a YouTube Premium member signed in to YouTube in the same browser, with YouTube’s cookies allowed.') : null)));
     page.appendChild(h('section', h('h2', duo('話す', 'Talk: putting it into practice')),
       h('ul.plain',
         h('li', h('b', 'Choose a conversation. '), 'A scene (a café, a ramen shop, a convenience store, asking the way, meeting someone, weekend plans, anime), your own words from the garden, or a song from your library. Pick polite です/ます or casual speech.'),
