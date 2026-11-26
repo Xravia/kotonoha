@@ -1368,6 +1368,18 @@ body.drop-on::after { content: 'Drop your songs: each becomes a lesson'; positio
   background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 14px; }
 @media (max-width: 700px) { .update-bar { bottom: 76px; } }
 
+/* the downloader (56-dl) */
+.dl-card .dl-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 6px; }
+.dl-card .dl-link { flex: 1 1 260px; min-width: 0; }
+.dl-card .check { display: block; margin: 6px 0; font-size: 0.92em; }
+.dl-jobs { margin: 8px 0 0; }
+.dl-job { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line, rgba(0,0,0,.08)); font-size: 0.92em; }
+.dl-job .dl-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-job .dl-state { color: var(--muted, #777); font-variant-numeric: tabular-nums; }
+.dl-job.fail .dl-state { color: var(--bad, #b33); white-space: normal; grid-column: 1 / -1; }
+.dl-job .dl-bar { grid-column: 1 / -1; height: 3px; background: var(--line, rgba(0,0,0,.08)); border-radius: 2px; overflow: hidden; }
+.dl-job .dl-bar span { display: block; height: 100%; background: var(--accent, #3b5bdb); transition: width .4s; }
+
 </style>
 </head>
 <body>
@@ -16830,9 +16842,10 @@ const Maker = {
     await Lib.create(m);
     if (m.yt && !own) Player.attachYT(m.id, m.yt, m.title, m.ytStart);
     if (!own) setTimeout(() => Shelf.lookAround(), 300);              // a file of it under another name (its tags tell)
+    if (!own && m.yt && Dl.auto()) Dl.forLesson(m);                   // the helper saves the song into the folder
     else if (Game.p.settings.autoWords !== false) WordTime.queue(m);
     Game.p.lastMedia = m.id; Game.touch();
-    step('build', 'done', plural(m.stages.length, 'stage') + (own ? ' · your file “' + own.name + '” is attached, so it plays offline' : m.yt ? ' · the video streams from YouTube' : ''));
+    step('build', 'done', plural(m.stages.length, 'stage') + (own ? ' · your file “' + own.name + '” is attached, so it plays offline' : m.yt && Dl.auto() ? ' · the song is being saved to your folder' : m.yt ? ' · the video streams from YouTube' : ''));
 
     /* 7. the dictionary breakdown and the plan */
     step('plan', 'work', 'Breaking down every line and writing the plan…');
@@ -17333,7 +17346,7 @@ const Shelf = {
     m.fav = (on == null ? !m.fav : on) ? now() : 0;
     await Lib.save(m); Game.touch();
     Bus.emit('shelf', m.id);
-    if (m.fav && !this.own(m) && this.needs(m)) this.lookAround();
+    if (m.fav && !this.own(m) && this.needs(m)) { this.lookAround(); if (m.yt && Dl.ok) Dl.forLesson(m); }
     return !!m.fav;
   },
   /** Where this lesson's own file is on this device: 'folder', 'kept' (a copy in this browser), 'here' (picked this visit), or ''. */
@@ -17726,7 +17739,7 @@ const Batch = {
     let n = 0;
     for (const e of entries) {
       if (Folder.lessonFor(e) || this.items.some(x => x.path === e.path && x.state !== 'fail')) continue;
-      const item = { id: uid(), name: e.name, size: e.file ? e.file.size : 0, path: e.path, state: 'wait', added: now() };
+      const item = Object.assign({ id: uid(), name: e.name, size: e.file ? e.file.size : 0, path: e.path, state: 'wait', added: now() }, e.extra || {});
       this.items.push(item);
       if (e.file) {
         this._files.set(item.id, e.file);
@@ -17760,6 +17773,7 @@ const Batch = {
       if (entry && !f) { try { f = await Folder.fileOf(entry); } catch (e) { return Folder.connected() ? null : 'folder'; } }
     }
     if (!f && it.kept) { try { const rec = await MediaCache.get('q:' + it.id); if (rec && rec.blob) f = new File([rec.blob], it.name, { type: rec.type || rec.blob.type || '' }); } catch (e) {} }
+    if (!f && it.dl && Dl.ok) { try { f = await Dl.fileOf(it.dl, it.name); } catch (e) {} }          // saved by the helper: it hands the file over again
     return f ? { file: f, entry } : null;
   },
   async run() {
@@ -17776,6 +17790,7 @@ const Batch = {
         if (!src) { it.state = 'fail'; it.note = 'The file is not there any more.'; this.save(); this.changed(); continue; }
         try {
           const m = await this.make(it, src);
+          if (it.dl) await Dl.made(m, it);
           it.state = 'done'; it.mid = m.id; it.title = m.title; it.at = now(); it.note = '';
           it.timed = !!m.timed; it.en = m.lines.filter(l => l.en).length; it.lines = m.lines.length;
           if (it.kept) { MediaCache.del('q:' + it.id); it.kept = 0; }
@@ -17951,6 +17966,237 @@ const Batch = {
     if (!c.open && !c.words) return null;
     return h('section.batch-today', h('p', h('b', 'Making lessons from your songs: '), c.done + ' of ' + c.all + ' ready' + (c.words ? ', ' + c.words + ' need' + (c.words === 1 ? 's' : '') + ' you' : '') + '.'),
       btn('See them', { cls: 'small', onclick: () => App.go('library') }));
+  }
+};
+
+/* ===== 56-dl.js ===== */
+/* ---------- 56-dl: the downloader on the learner's PC ----------
+   "Kotonoha Helper" beside the game starts a small program (helper/kotonoha_helper.py) that saves songs, playlists
+   and episodes into the media folder (Downloads) with yt-dlp and answers the game at 127.0.0.1:47811. The game asks
+   it for a lesson's song (by itself after Make a lesson, when a song is saved with ♡, or with Save it to my folder)
+   and for playlists (every video becomes a lesson as it arrives), then collects what was saved: the lesson plays its
+   own file from then on (no ads, no buffering, offline, Karaoke). */
+'use strict';
+
+const Dl = {
+  BASE: 'http://127.0.0.1:47811',
+  ok: false, info: null, jobs: [], _seen: null, _poll: 0, _busy: false, _tried: 0,
+
+  /** A computer, in the folder copy or the web version (on a phone the address would be the phone itself). */
+  where() { return typeof window !== 'undefined' && BUILD.target === 'local' && !PhoneApp.mobile && typeof fetch === 'function'; },
+  /** The game reaches for the helper by itself only once the learner has connected it (the web version's browser asks
+      permission then; and a game without the helper should not knock on a closed door every time it opens). */
+  allowed() { try { return localStorage.getItem('kotonoha.dl') === '1'; } catch (e) { return false; } },
+  auto() { return this.ok && Game.p.settings.dlAuto !== false; },
+  kind() { return Game.p.settings.dlKind === 'video' ? 'video' : 'song'; },
+  url(path) { return this.BASE + '/file/' + String(path).split('/').map(encodeURIComponent).join('/'); },
+  isPlaylist(q) { return /^https?:\/\/(www\.|m\.|music\.)?youtube\.com\/.*[?&]list=[\w-]+/i.test(q) && (/\/playlist\b/i.test(q) || !/[?&]v=/.test(q)); },
+
+  async init() {
+    if (!this.where()) return;
+    try { this._seen = new Set((await Store.get('dl')) || []); } catch (e) { this._seen = new Set(); }
+    if (this.allowed()) this.ping();
+    window.addEventListener('focus', () => { if (!this.ok && this.allowed() && Date.now() - this._tried > 15000) this.ping(); });
+    // what is on screen follows the downloads
+    Bus.on('dl', () => {
+      const card = document.querySelector('.dl-card'); if (card && card._draw) card._draw();
+      if (App.cur === 'theater' && Views.theater.T && Views.theater.T.mode === 'watch') Views.theater.drawPanel();
+    });
+    Bus.on('dl-jobs', () => {
+      const list = document.querySelector('.dl-card .dl-jobs'); if (list && list._fill) list._fill();
+      const M = Views.make.M, mm = M && M.id && Lib.get(M.id);
+      if (App.cur === 'make' && mm && !mm.fileName) { const el = document.getElementById('make-dl'), ln = this.line(mm.id); if (el) el.textContent = ln; else if (ln) Views.make.draw(); }
+      const T = Views.theater.T, th = document.getElementById('th-dl');
+      if (th && T) th.textContent = this.line(T.m.id);
+    });
+  },
+  async req(path, body, ms) {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const t = ctl ? setTimeout(() => ctl.abort(), ms || 8000) : 0;
+    try {
+      const o = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' };
+      if (ctl) o.signal = ctl.signal;
+      const r = await fetch(this.BASE + path, o);
+      if (!r.ok) throw new Error('The helper answered ' + r.status + '.');
+      return await r.json();
+    } finally { clearTimeout(t); }
+  },
+  /** Is the helper running? user: the learner clicked (the web version may ask the browser's permission now). */
+  async ping(user) {
+    this._tried = Date.now();
+    const was = this.ok;
+    try {
+      const r = await this.req('/ping', null, user ? 30000 : 2500);
+      if (!r || r.app !== 'kotonoha-helper') throw new Error('not the helper');
+      this.ok = true; this.info = r;
+      if (user) { try { localStorage.setItem('kotonoha.dl', '1'); } catch (e) {} }
+    } catch (e) { this.ok = false; }
+    if (was !== this.ok) Bus.emit('dl');
+    if (this.ok) this.poll(true);
+    return this.ok;
+  },
+  poll(now) {
+    clearTimeout(this._poll);
+    const go = async () => {
+      if (!this.ok) return;
+      try { this.jobs = (await this.req('/jobs', null, 6000)).jobs || []; }
+      catch (e) { this.ok = false; Bus.emit('dl'); return; }
+      await this.collect();
+      Bus.emit('dl-jobs');
+      const busy = this.jobs.some(j => j.state === 'wait' || j.state === 'work' || j.state === 'list');
+      this._poll = setTimeout(go, busy ? 1500 : 15000);
+    };
+    if (now) go(); else this._poll = setTimeout(go, 1500);
+  },
+  async get(body) {
+    const r = await this.req('/get', body, 10000);
+    this.poll(true);
+    return r.job;
+  },
+  /** Save a lesson's song (or video) into the folder; the lesson takes it when it is there. */
+  async forLesson(m, kind) {
+    if (!this.ok || !m || !m.yt) return null;
+    const name = Shelf.safeName([m.artist, m.title].filter(Boolean).join(' - ')) || null;
+    try { return await this.get({ url: 'https://www.youtube.com/watch?v=' + m.yt, kind: kind || this.kind(), name, lesson: m.id }); }
+    catch (e) { toast('The downloader did not answer: ' + String(e.message || e), 'bad'); return null; }
+  },
+  /** A playlist (or any link) whose videos become lessons as they arrive. */
+  async many(url, kind) {
+    try {
+      const j = await this.get({ url, kind: kind || this.kind(), make: true });
+      toast(this.isPlaylist(url) ? 'Saving the playlist into your folder: each song becomes a lesson as it arrives.' : 'Saving it into your folder: it becomes a lesson when it arrives.', 'good');
+      return j;
+    } catch (e) { toast('The downloader did not answer: ' + String(e.message || e), 'bad'); return null; }
+  },
+  jobFor(id) { for (let i = this.jobs.length - 1; i >= 0; i--) if (this.jobs[i].lesson === id) return this.jobs[i]; return null; },
+  /** A short line for a lesson's download: '' when there is none. */
+  line(id) {
+    const j = this.jobFor(id);
+    if (!j) return '';
+    if (j.state === 'wait') return 'Waiting to be saved to your folder…';
+    if (j.state === 'work') return 'Saving to your folder… ' + Math.round((j.progress || 0) * 100) + '%';
+    if (j.state === 'fail') return 'Could not save it: ' + (j.error || 'the download failed') + '.';
+    return 'Saved in your folder: it plays from there, offline, with no ads.';
+  },
+
+  /* ----- taking what was saved ----- */
+  async collect() {
+    if (this._busy || !this._seen) return;
+    this._busy = true;
+    try {
+      for (const j of this.jobs) {
+        if (j.state !== 'done' || !j.path || this._seen.has(j.id)) continue;
+        this._seen.add(j.id);
+        Store.set('dl', Array.from(this._seen).slice(-3000));
+        try {
+          const m = j.lesson ? Lib.get(j.lesson) : null;
+          if (m) await this.attach(m, j);
+          else if (j.make) await this.toBatch(j);
+        } catch (e) { console.warn('downloader', j.name, e); }
+      }
+    } finally { this._busy = false; }
+  },
+  /** The file itself, from the helper (null for one too big to keep in the browser: it is played from the helper). */
+  async fileOf(path, name, size) {
+    if (size && size > 220e6) return null;
+    const r = await fetch(this.url(path));
+    if (!r.ok) throw new Error('The helper could not hand over “' + name + '” (' + r.status + ').');
+    const b = await r.blob();
+    return new File([b], name, { type: b.type || '' });
+  },
+  async attach(m, j) {
+    if (m.fileName && !Shelf.needs(m)) return;                       // it has its own file already
+    const file = await this.fileOf(j.path, j.name, j.size);
+    m.fileName = j.name; m.filePath = j.path; m.fileSize = j.size; m.dl = { vid: j.vid, kind: j.kind, at: now() };
+    if (j.kind === 'video') m.isVideo = true;
+    if (m.yt && j.vid === m.yt) { m.offset = m.ytOffset || 0; m.offsetSet = m.ytOffsetSet ? 1 : 0; m.fileOff = 0; }   // the video's own sound keeps the video's timing
+    if (j.duration) m.fileDur = j.duration;
+    await Lib.saveContent(m);
+    if (file) {
+      if (!Folder.connected() && location.protocol !== 'file:') await MediaCache.put(m.id, file);   // the web version keeps a copy to play without the helper
+      Player.attach(m.id, file);
+    } else Player.attachUrl(m.id, this.url(j.path), j.name);
+    if (m.timed && m.type === 'song' && Game.p.settings.autoWords !== false) WordTime.queue(m);
+    Bus.emit('dl-ready', m.id); Bus.emit('shelf', m.id); Bus.emit('folder');
+    toast('“' + m.title + '” is saved in your folder: it plays from there now, offline, with no ads.', 'good');
+  },
+  /** A saved video that belongs to no lesson yet: a lesson is made from it (its Japanese subtitles when it has them). */
+  async toBatch(j) {
+    const extra = { dl: j.path, vid: j.vid || '' };
+    const artist = String(j.uploader || '').replace(/\s+-\s+Topic$/i, '');
+    if (j.track && artist) extra.guess = { title: j.track, artist, user: 1 };
+    if (j.subs) {
+      try { const r = await fetch(this.url(j.subs)); if (r.ok) { extra.sideText = (await r.text()).slice(0, 400000); extra.sideName = j.subs.split('/').pop(); } } catch (e) {}
+    }
+    let entry = null;
+    if (Folder.connected()) { try { await Folder.scan(); } catch (e) {} entry = Folder.entries.get(j.path) || null; }
+    if (entry) { Batch.addEntries([Object.assign({}, entry, { extra })]); return; }
+    const file = await this.fileOf(j.path, j.name, j.size);
+    if (!file) { toast('“' + j.name + '” is too big to make a lesson from here: open it from your folder.', ''); return; }
+    Batch.addEntries([{ name: j.name, path: j.path, file, extra }]);
+  },
+  /** A lesson made from a saved video: it remembers where the file is and which video it was. */
+  async made(m, it) {
+    if (!m) return;
+    if (!m.filePath) m.filePath = it.dl;
+    if (it.vid && !m.yt) m.yt = it.vid;
+    m.dl = { vid: it.vid || '', at: now() };
+    await Lib.saveContent(m);
+  },
+
+  /* ----- on screen ----- */
+  card() {
+    if (!this.where()) return null;
+    const box = h('section.find-card.dl-card');
+    const draw = () => mount(box, this.ok ? this.ready(draw) : this.missing(draw));
+    draw();
+    box._draw = draw;
+    return box;
+  },
+  missing(draw) {
+    const web = location.protocol !== 'file:';
+    return [h('div', h('h2', duo('取り込む', 'Save songs and playlists to your folder')),
+      h('p.sub', 'Pick a song, a playlist or an episode and it is saved into your media folder and made into a lesson by itself: it plays with no ads and no waiting, offline too, and Karaoke works.'),
+      h('p.fine', 'Start ', h('b', 'Kotonoha Helper'), ' once: double-click it in the Kotonoha folder (Media For Game › Kotonoha). The first start sets itself up in a few minutes; keep its window open, or let it start with Windows.' + (web ? ' Then press Connect: the browser asks once whether this page may talk to it.' : ''))),
+      h('div.btn-row', btn(this.allowed() ? 'Check again' : 'Connect', { cls: 'primary', icon: 'sync', onclick: async () => {
+        const ok = await this.ping(true);
+        if (!ok) toast('The helper is not running yet: double-click “Kotonoha Helper” in the Kotonoha folder, wait for “Kotonoha helper is running”, then try again.', '');
+        draw();
+      } }))];
+  },
+  ready(draw) {
+    const s = Game.p.settings, info = this.info || {};
+    const input = h('input.dl-link', { type: 'url', placeholder: 'Paste a YouTube or YouTube Music link: a video or a playlist', 'aria-label': 'Link to save' });
+    const kindSeg = h('div.seg', { role: 'radiogroup', 'aria-label': 'What to save' }, [['song', 'Song (sound)'], ['video', 'Video']].map(([k, l]) =>
+      h('button.seg-btn' + (this.kind() === k ? '.on' : ''), { type: 'button', role: 'radio', 'aria-checked': this.kind() === k ? 'true' : 'false', title: k === 'video' ? 'The video, with Japanese subtitles when it has them (for episodes)' : 'The sound only: small, quick, Karaoke-ready', onclick: () => { s.dlKind = k; Game.touch(); draw(); } }, l)));
+    const go = () => {
+      const q = input.value.trim();
+      if (!/^https?:\/\//i.test(q)) { toast('Paste a link (a video or a playlist).', ''); return; }
+      input.value = '';
+      if (this.isPlaylist(q)) this.many(q);
+      else if (this.kind() === 'video') this.many(q);                         // an episode: its subtitles make the lesson
+      else App.go('make', { q });                                           // a song: Make a lesson finds its words, then saves it
+    };
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    const videoOnly = Lib.list.filter(m => m.yt && !m.sample && Shelf.needs(m) && !(this.jobFor(m.id) && this.jobFor(m.id).state !== 'fail'));
+    const list = h('ul.plain.dl-jobs');
+    const fill = () => {
+      const recent = this.jobs.filter(j => !j.parent || j.state !== 'done').slice(-8).reverse();
+      mount(list, recent.map(j => h('li.dl-job.' + j.state,
+        h('span.dl-title', j.title || j.name || j.url),
+        h('span.dl-state', j.state === 'work' ? Math.round((j.progress || 0) * 100) + '%' : j.state === 'wait' ? 'waiting' : j.state === 'list' ? (j.items || []).length + ' videos' : j.state === 'fail' ? (j.error || 'failed') : 'saved'),
+        j.state === 'work' ? h('span.dl-bar', h('span', { style: 'width:' + Math.round((j.progress || 0) * 100) + '%' })) : null,
+        j.state === 'fail' ? btn('Try again', { cls: 'small ghost', onclick: () => this.req('/retry', { id: j.id }).then(() => this.poll(true)) }) : null)));
+    };
+    fill();
+    list._fill = fill;
+    return [h('div', h('h2', duo('取り込む', 'Save songs and playlists to your folder')),
+      h('p.sub', 'Ready: saved into ', h('code', info.folder || 'Downloads'), '. Each one becomes a lesson by itself and plays from there, with no ads, offline, and with Karaoke.')),
+      h('div.dl-row', input, kindSeg, btn('Save', { cls: 'primary', icon: 'download', onclick: go })),
+      h('label.check', h('input', { type: 'checkbox', checked: s.dlAuto !== false, onchange: e => { s.dlAuto = e.target.checked; Game.touch(); } }), ' Save each new lesson’s song to the folder by itself'),
+      info.windows ? h('label.check', h('input', { type: 'checkbox', checked: !!info.autostart, onchange: async e => { try { await this.req('/autostart', { on: e.target.checked }); info.autostart = e.target.checked; toast(e.target.checked ? 'The helper starts with Windows from now on (in the background).' : 'The helper no longer starts with Windows.', 'good'); } catch (err) { toast('The helper did not answer.', 'bad'); } } }), ' Start the helper with Windows') : null,
+      videoOnly.length ? h('div.btn-row', btn('Save all ' + plural(videoOnly.length, 'music-video lesson'), { icon: 'download', onclick: async () => { for (const m of videoOnly) await this.forLesson(m); toast('Saving ' + plural(videoOnly.length, 'song') + ' into your folder: each lesson switches to its file when it arrives.', 'good'); draw(); } })) : null,
+      list];
   }
 };
 
@@ -19105,6 +19351,7 @@ const Player = {
         this.yt.open(f.yt, f.ytStart || 0);
       } else {
         this.el.setBackend(this.video);
+        this.video.crossOrigin = f.url.indexOf(Dl.BASE) === 0 ? 'anonymous' : null;   // the helper's files: shared with this page
         this.video.src = f.url; try { this.video.load(); } catch (e) {}
       }
       Vocals.drop();
@@ -19206,6 +19453,7 @@ const Player = {
         for (const up of ['../', '', '../../']) { if (await this.probe(up + rel)) { this.attachUrl(m.id, up + rel, m.fileName); return true; } }
       }
       if (await this.restore(m.id)) return true;
+      if (m.dl && m.filePath && Dl.ok) { this.attachUrl(m.id, Dl.url(m.filePath), m.fileName); return true; }   // saved by the helper, too big to keep here
       if (m.yt) { this.attachYT(m.id, m.yt, m.title, m.ytStart); return true; }          // no file of its own: its music video
       return false;
     })();
@@ -19248,7 +19496,7 @@ const Vocals = {
     if (!this.supported()) return false;
     const f = Player.info(id);
     if (!f || f.yt || !f.url || Player.broken.has(id)) return false;
-    if (/^blob:/.test(f.url)) return true;
+    if (/^blob:/.test(f.url) || f.url.indexOf(Dl.BASE) === 0) return true;
     try { const u = new URL(f.url, location.href); return /^https?:$/.test(u.protocol) && u.origin === location.origin; } catch (e) { return false; }
   },
   /** Is the karaoke element the one playing now? */
@@ -19310,7 +19558,7 @@ const Vocals = {
     const k = this.el;
     this.graph();
     const t = plain.currentTime || 0, playing = !plain.paused && !plain.ended;
-    if (k.getAttribute('src') !== f.url) k.src = f.url;
+    if (k.getAttribute('src') !== f.url) { k.crossOrigin = f.url.indexOf(Dl.BASE) === 0 ? 'anonymous' : null; k.src = f.url; }
     k.playbackRate = plain.playbackRate || 1; k.controls = plain.controls; k.volume = plain.volume;
     P.el.setBackend(k);
     const go = () => { try { k.currentTime = t; } catch (e) {} if (playing) { const p = k.play(); if (p && p.catch) p.catch(() => {}); } };
@@ -20721,6 +20969,8 @@ Views.library = {
     }
     const add = Batch.addCard();
     if (add) page.appendChild(add);
+    const dl = Dl.card();
+    if (dl) page.appendChild(dl);
     const shelf = this.savedShelf();
     if (shelf) page.appendChild(shelf);
     const folderCard = this.folderCard();
@@ -21874,6 +22124,7 @@ Views.theater = {
       this.drawScreen(); this.drawCtl();
     }));
     this.T.offs.push(Bus.on('folder', () => { if (this.T === T && !Player.has(m.id)) this.attachMedia(); }));
+    this.T.offs.push(Bus.on('dl-ready', id => { if (this.T !== T || id !== m.id) return; const t = Player.time(), was = Player.isPlaying(); Player.pause(); this.attachMedia().then(() => { if (this.T !== T) return; Player.seek(m.id, t); if (was) this.togglePlay(); this.drawPanel(); }); }));
     this.T.offs.push(Bus.on('vocals', what => { if (this.T !== T) return; this.drawCtl(); if (what === 'mono' && T.mode === 'watch') this.drawPanel(); }));
     this._ended = () => { if (this.T === T) this.onEnded(); };
     Player.el.addEventListener('ended', this._ended);
@@ -22397,6 +22648,14 @@ Views.theater = {
       const f = e.target.files[0]; e.target.value = ''; if (!f) return;
       Shelf.pickFor(m, f).then(r => { if (r && r.fit && r.fit.moved) toast('The lines were re-timed to fit your file.', 'good'); }).catch(err => toast(String(err.message || err), 'bad')).then(() => this.attachMedia());
     } });
+    if (Player.isYouTube(m.id) && Dl.ok) {
+      const ln = Dl.line(m.id), j = Dl.jobFor(m.id);
+      return h('section.block.th-sing', head,
+        h('p.fine', 'Save the song into your folder: then it plays from there with no ads and no buffering, offline too, and Karaoke can take the singer out.'),
+        h('p.fine#th-dl', ln),
+        !j || j.state === 'fail' ? h('div.btn-row', btn('Save it to my folder', { cls: 'small primary', icon: 'download', onclick: async () => { await Dl.forLesson(m); this.drawPanel(); } }),
+          btn('Save the video', { cls: 'small ghost', onclick: async () => { await Dl.forLesson(m, 'video'); this.drawPanel(); } })) : null);
+    }
     if (Player.isYouTube(m.id)) {
       const more = h('div.th-np-more');
       return h('section.block.th-sing', head,
@@ -23702,13 +23961,20 @@ Views.make = {
           bg ? h('li', h('span.spin'), ' ' + AI.name() + ' is translating the other lines in the background') : null,
           h('li', m.fileName ? '✓ Your own file plays, also offline' : m.yt && fromDisk ? '✓ The video plays through the game’s website (needs the internet); add the song as a file to play it offline' : m.yt ? '✓ The video streams from YouTube (needs the internet)' : '✗ No video: the voice reads the lines'),
           h('li', '✓ Words, readings, grammar and translations are saved on this device'),
-          !m.fileName ? h('li.make-own', 'To play it offline: ', h('a', { href: '#', onclick: e => { e.preventDefault(); mount(own, own.firstChild ? null : storeLinks(m)); } }, 'buy the song as a file'),
+          !m.fileName && Dl.jobFor(m.id) ? h('li.make-own', h('span#make-dl', Dl.line(m.id))) : null,
+          !m.fileName && !Dl.jobFor(m.id) ? h('li.make-own', 'To play it offline: ', h('a', { href: '#', onclick: e => { e.preventDefault(); mount(own, own.firstChild ? null : storeLinks(m)); } }, 'buy the song as a file'),
             ' or ', h('label.linkish', { for: 'make-own-pick' }, 'add one you have'), songPicker(m, 'make-own-pick', () => this.draw()), '. ♡ Save keeps it on your shelf.') : null),
         own)),
       m.plan ? Plan.card(m, { actions: acts }) : acts);
   },
   async start(q) {
     q = String(q || '').trim(); if (!q || (this.M && this.M.busy)) return;
+    if (Dl.isPlaylist(q)) {
+      if (!Dl.ok && Dl.allowed()) await Dl.ping();
+      if (Dl.ok) { await Dl.many(q); App.go('library'); return; }
+      this.M = { q, busy: false, steps: {}, err: 'A playlist is saved by the downloader on your computer: start Kotonoha Helper (Library › Save songs and playlists to your folder), then paste the link again.', opts: null, r: null, id: null };
+      this.draw(); return;
+    }
     const M = this.M = { q, busy: true, steps: {}, err: '', opts: null, r: null, id: null };
     this.draw();
     const ui = {
@@ -24927,6 +25193,7 @@ Views.guide = {
     page.appendChild(h('section', h('h2', duo('歌う', 'Sing along')),
       h('ul.plain',
         h('li', h('b', 'Karaoke and Guide. '), 'With the song’s own file, Watch has Original · Guide · Karaoke under the lyrics. Karaoke takes the singer out as far as the recording allows: most records put the lead voice in the middle, so the middle is turned down across the voice’s range while the bass, the drums and everything placed left or right stay. Guide keeps the singer quietly leading. A clip of a line or a word always plays with the singer.'),
+        BUILD.local ? h('li', h('b', 'Songs saved for you. '), 'On a computer, start Kotonoha Helper (in the Kotonoha folder) once. Then each new lesson’s song is saved into your media folder by itself, ♡ saves a song too, a pasted playlist becomes a lesson per song, and a video link saved as Video (an episode) uses its Japanese subtitles. Library › Save songs and playlists to your folder shows what is on its way.') : null,
         h('li', h('b', 'How to practise. '), 'Sing each word as it lights up. Repeat line (L) drills a hard one, 0.85× gives you time, and once you know it, hide the lyrics (隠す) and sing from memory.'),
         BUILD.local ? h('li', h('b', 'No ads. '), 'Kotonoha has no ads and earns nothing from YouTube. A lesson made from a music video plays it in YouTube’s own player, and YouTube may put its ads on a video there; no site that shows YouTube videos can turn them off. The song’s own file has none (and no buffering), and neither does YouTube for a YouTube Premium member signed in to YouTube in the same browser, with YouTube’s cookies allowed.') : null)));
     page.appendChild(h('section', h('h2', duo('話す', 'Talk: putting it into practice')),
@@ -25159,6 +25426,7 @@ async function boot(snap) {
     step = 'folder';
     Shelf.init().catch(e => console.warn('shelf', e));
     Batch.init().catch(e => console.warn('batch', e));
+    Dl.init().catch(e => console.warn('downloader', e));
     const folderDone = Folder.init().catch(e => console.warn('folder', e));
     await Promise.race([folderDone, sleep(2500)]);
     step = 'start';
