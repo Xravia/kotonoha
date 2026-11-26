@@ -1364,6 +1364,9 @@ body.drop-on::after { content: 'Drop your songs: each becomes a lesson'; positio
 .th-nomedia .store-links { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.18); color: #e7ebf7; text-align: left; max-width: 640px; }
 .th-nomedia .store-links a { color: #fff; }
 .th-nomedia .store-links .fine { color: #b9c1d9; }
+.update-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 9000; display: flex; align-items: center; gap: 12px; padding: 10px 14px 10px 18px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 14px; }
+@media (max-width: 700px) { .update-bar { bottom: 76px; } }
 
 </style>
 </head>
@@ -24728,19 +24731,33 @@ const PhoneApp = {
     const secure = location.protocol === 'https:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
     if ('serviceWorker' in navigator && secure) {
       navigator.serviceWorker.register('sw.js').then(reg => {
-        if (reg.waiting && navigator.serviceWorker.controller) { this.waiting = reg.waiting; Bus.emit('phone', 'update'); }
+        this.reg = reg; this._checked = now();
+        if (reg.waiting && navigator.serviceWorker.controller) { this.waiting = reg.waiting; Bus.emit('phone', 'update'); this.applyUpdate(); }
         reg.addEventListener('updatefound', () => {
           const w = reg.installing; if (!w) return;
           w.addEventListener('statechange', () => {
             if (w.state === 'installed') {
-              if (navigator.serviceWorker.controller) { this.waiting = w; Bus.emit('phone', 'update'); toast('A new version of Kotonoha is ready. Settings > This phone > Update now.'); }
+              if (navigator.serviceWorker.controller) { this.waiting = w; Bus.emit('phone', 'update'); this.applyUpdate(); }
               else this.checkOffline();
             }
             if (w.state === 'activated') this.checkOffline();
           });
         });
+        // an installed app can stay open for days: look for a new version whenever it comes back to the front
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible' && now() - (this._checked || 0) > 20 * 60000) { this._checked = now(); reg.update().catch(() => {}); }
+        });
       }).catch(e => console.warn('service worker', e));
-      navigator.serviceWorker.addEventListener('controllerchange', () => { if (this._updating) { this._updating = false; location.reload(); } });
+      // a new version took over: reload into it now if nothing is lost, otherwise as soon as the learner leaves the lesson
+      // (the very first worker taking charge of the page is not an update: nothing to reload)
+      let had = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!had) { had = true; return; }
+        if (this._reloading) return;
+        if (this._updating || this.safeToReload()) { this._reloading = true; location.reload(); }
+        else { this._pending = true; this.updateBar(); }
+      });
+      Bus.on('view', () => { if (this._pending && !this._reloading && this.safeToReload()) { this._reloading = true; location.reload(); } });
       this.checkOffline();
     }
     try {
@@ -24756,6 +24773,30 @@ const PhoneApp = {
     try { p.prompt(); const r = await p.userChoice; return r && r.outcome === 'accepted'; } catch (e) { return false; } finally { App.refresh(); }
   },
   update() { if (!this.waiting) return; this._updating = true; try { this.waiting.postMessage('skip-waiting'); } catch (e) { location.reload(); } },
+  /** A version waiting to take over (from before updates took over by themselves): use it now if nothing is lost. */
+  applyUpdate() {
+    if (!this.waiting) return;
+    if (this.safeToReload()) this.update();
+    else { this._pendingWaiting = true; this.updateBar(); }
+  },
+  /** Reloading loses nothing: the game has just opened, or the learner is on a screen that is not a lesson or a round,
+      and nothing is playing. */
+  safeToReload() {
+    if (typeof performance !== 'undefined' && performance.now() < 30000) return true;
+    const busy = ['theater', 'study', 'test', 'write', 'talk', 'review', 'import'];
+    if (busy.indexOf(App.cur) !== -1) return false;
+    if (typeof Batch !== 'undefined' && Batch.running) return false;
+    try { if (Player.isPlaying() || (typeof Bgm !== 'undefined' && Bgm.on)) return false; } catch (e) {}
+    return true;
+  },
+  /** A quiet bar: a new version is ready, reload when you like (or it reloads when you leave the lesson). */
+  updateBar() {
+    if (document.getElementById('update-bar')) return;
+    const bar = h('div#update-bar.update-bar', { role: 'status' }, h('span', 'Kotonoha has been updated.'),
+      btn('Reload now', { cls: 'small primary', onclick: () => { if (this._pendingWaiting) this.update(); else { this._reloading = true; location.reload(); } } }));
+    document.body.appendChild(bar);
+    if (this._pendingWaiting) Bus.on('view', () => { if (this._pendingWaiting && this.safeToReload()) { this._pendingWaiting = false; this.update(); } });
+  },
   /** Is everything the game needs kept on the phone? */
   async checkOffline() {
     if (!('caches' in window)) { this.offline = false; return false; }
