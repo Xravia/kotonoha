@@ -1334,6 +1334,37 @@ label.linkish { color: var(--ai); text-decoration: underline; cursor: pointer; }
 .btn.th-tap { min-width: 9em; font-size: 17px; }
 .word-tool .btn-row { flex: none; }
 
+/* many songs in: the add card, the queue, dropping files anywhere */
+.batch-card { display: flex; flex-direction: column; gap: 12px; }
+.batch-drop { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; padding: 18px 20px;
+  background: var(--surface); border: 2px dashed var(--rule); border-radius: 14px; transition: border-color .15s, background .15s; }
+.batch-drop.over { border-color: var(--ai); background: var(--ai-soft, var(--well)); }
+.batch-drop > div:first-child { flex: 1 1 340px; min-width: 0; }
+.batch-panel:empty { display: none; }
+.batch-panel { padding: 14px 18px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; }
+.batch-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.batch-head h3 { font-size: 17px; font-weight: 600; }
+.batch-list { display: flex; flex-direction: column; margin: 8px 0 0; padding: 0; list-style: none; }
+.batch-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 9px 0; border-top: 1px solid var(--rule); }
+.batch-row .br-main { display: flex; flex-direction: column; gap: 1px; flex: 1 1 260px; min-width: 0; }
+.batch-row .br-main .fine { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-st { font-size: 13px; color: var(--ink-2); }
+.batch-st.work { color: var(--ai); }
+.batch-st.done { color: var(--good); }
+.batch-st.words, .batch-st.fail { color: var(--shu); }
+.batch-row.work .br-main b::after { content: ''; display: inline-block; width: 8px; height: 8px; margin-left: 8px; border-radius: 50%; background: var(--ai); animation: batchPulse 1s ease-in-out infinite; vertical-align: middle; }
+@keyframes batchPulse { 50% { opacity: .25; } }
+.batch-ask { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; }
+.batch-ask-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.batch-ask-row input { flex: 1 1 160px; min-width: 0; }
+.batch-today { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; }
+body.drop-on::after { content: 'Drop your songs: each becomes a lesson'; position: fixed; inset: 12px; z-index: 9999; display: flex; align-items: center; justify-content: center;
+  border: 3px dashed var(--ai); border-radius: 18px; background: color-mix(in srgb, var(--bg) 82%, transparent); color: var(--ink); font-size: 22px; font-weight: 600; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .batch-row.work .br-main b::after { animation: none; } }
+.th-nomedia .store-links { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.18); color: #e7ebf7; text-align: left; max-width: 640px; }
+.th-nomedia .store-links a { color: #fff; }
+.th-nomedia .store-links .fine { color: #b9c1d9; }
+
 </style>
 </head>
 <body>
@@ -12033,7 +12064,7 @@ label.linkish { color: var(--ai); text-decoration: underline; cursor: pointer; }
 比率	ひりつ	ratio, proportion, percentage	1	0
 </script>
 <script>
-window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-24","hosted":true,"web":"https://xravia.github.io/kotonoha/"};
+window.KTN_BUILD = {"target":"local","v":"2.0","built":"2026-11-26","hosted":true,"web":"https://xravia.github.io/kotonoha/"};
 </script>
 <script>
 /* ===== 00-util.js ===== */
@@ -13269,7 +13300,7 @@ const Lib = {
     this.list.push(m);
     if (Game.p.media.indexOf(m.id) === -1) Game.p.media.push(m.id);
     await this.saveContent(m);
-    Game.touch();
+    Game.touch(); Game.flush();                                     // the list of lessons is saved now, not in 4 s
     return m;
   },
   async remove(id) {
@@ -13406,7 +13437,11 @@ const Idb = {
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
     // leaving or hiding the page: write what is waiting now, not in 250 ms (a reload right after a change kept the old copy)
     if (typeof window !== 'undefined') {
-      const soon = () => { if (this._timer) { clearTimeout(this._timer); this._timer = 0; } if (this._dirty.size) this.flush(); };
+      const soon = () => {
+        try { if (typeof Game !== 'undefined' && Game.p) Game.flush(); } catch (e) {}   // the profile waits 4 s otherwise
+        if (this._timer) { clearTimeout(this._timer); this._timer = 0; }
+        if (this._dirty.size) this.flush();
+      };
       window.addEventListener('pagehide', soon);
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') soon(); });
     }
@@ -15878,7 +15913,7 @@ const Net = {
 };
 
 /* ----- YouTube, without an API key ----- */
-const YT = {
+const Tube = {
   /** A YouTube link's video and start time, or null. */
   parseLink(s) {
     s = String(s || '').trim();
@@ -16209,7 +16244,7 @@ const Maker = {
   /** What kind of request this is. */
   parse(input) {
     const s = Names.clean(input);
-    const yt = YT.parseLink(s);
+    const yt = Tube.parseLink(s);
     if (yt) return { kind: 'yt', id: yt.id, start: yt.start, text: s };
     if (/animesonglyrics\.com\//i.test(s) && ASL.isSongUrl(s.split(/\s/)[0])) return { kind: 'asl', url: s.split(/\s/)[0], text: s };
     return { kind: 'text', text: s, hints: Names.request(s) };
@@ -16236,6 +16271,7 @@ const Maker = {
     }
     const rows = new Map();
     const got = await Promise.allSettled(qs.slice(0, max || 8).map(q => this.lrcQuery(q)));
+    this._lrcDown = got.length > 0 && got.every(g => g.status === 'rejected');
     for (const g of got) if (g.status === 'fulfilled') for (const r of g.value) if (r && r.id != null && !rows.has(r.id)) rows.set(r.id, this.lrcRow(r));
     const list = Array.from(rows.values()).filter(r => !r.inst && r.lines >= 4);
     // group by lyrics
@@ -16461,7 +16497,7 @@ const Maker = {
         if (w) { add(w.split(' ').slice(0, 4).join(' '), 7); const long = w.split(' ').filter(x => x.length >= 5).sort((a, b) => b.length - a.length)[0]; if (long) add(long, 6); }
       }
       if (n.anime && !JP.hasJapanese(n.anime)) add(n.anime, 7.5);
-      if (n.text && !JP.hasJapanese(n.text) && !YT.parseLink(n.text)) add(n.text, 4);
+      if (n.text && !JP.hasJapanese(n.text) && !Tube.parseLink(n.text)) add(n.text, 4);
     }
     qs.sort((a, b) => b[1] - a[1]);
     const tried = new Set(), cands = new Map();
@@ -16543,7 +16579,7 @@ const Maker = {
     let video = null, want = { text: req.text, title: '', artist: '', anime: '', romaji: [], theme: null, version: '' };
     step('understand', 'work', req.kind === 'yt' ? 'Reading the YouTube link…' : 'Reading your request…');
     if (req.kind === 'yt') {
-      try { video = await YT.info(req.id); } catch (e) { video = { id: req.id, title: '', channel: '', duration: 0 }; R.notes.push('video info: ' + (e.message || e)); }
+      try { video = await Tube.info(req.id); } catch (e) { video = { id: req.id, title: '', channel: '', duration: 0 }; R.notes.push('video info: ' + (e.message || e)); }
       video.start = req.start || 0;
       if (video.title) Object.assign(want, Names.split(video.title, video.channel));
       want.text = video.title || req.text;
@@ -16570,7 +16606,7 @@ const Maker = {
     // an anime and a theme but no song name ("Chainsaw Man opening"): YouTube knows which song that is
     if (req.kind === 'text' && want.anime && !want.title) {
       try {
-        vids = await YT.search(want.anime + ' ' + (want.theme ? want.theme.kind + (want.theme.n ? ' ' + want.theme.n : '') : 'opening') + ' full');
+        vids = await Tube.search(want.anime + ' ' + (want.theme ? want.theme.kind + (want.theme.n ? ' ' + want.theme.n : '') : 'opening') + ' full');
         const ofAnime = vids.filter(v => Names.simName(Names.anime(v.title) || v.title, want.anime) >= 0.4 && !Names.VERSION.test(v.title) && !/\b(all|every|compilation|1\s*[-~〜]\s*\d+)\b|全/i.test(v.title));
         if (!(want.theme && want.theme.n)) {
           const songs = [];
@@ -16587,7 +16623,7 @@ const Maker = {
     const names = [want];
     const [gRes, vRes] = await Promise.allSettled([
       this.lrcFind(names),
-      req.kind === 'yt' ? Promise.resolve([]) : (vids.length ? Promise.resolve(vids) : YT.search(want.artistOnly ? want.artist + ' MV' : [want.artist, want.title || want.text].filter(Boolean).join(' ')))
+      req.kind === 'yt' ? Promise.resolve([]) : (vids.length ? Promise.resolve(vids) : Tube.search(want.artistOnly ? want.artist + ' MV' : [want.artist, want.title || want.text].filter(Boolean).join(' ')))
     ]);
     if (gRes.status === 'fulfilled') groups = gRes.value; else R.notes.push('lrclib: ' + (gRes.reason && gRes.reason.message || gRes.reason));
     if (vRes.status === 'fulfilled') vids = vRes.value; else R.notes.push('youtube search: ' + (vRes.reason && vRes.reason.message || vRes.reason));
@@ -16599,7 +16635,7 @@ const Maker = {
       const top = vids.slice(0, 8), byName = top.filter(v => Names.sameName(vArtist(v), want.text) || Names.sameName(Names.channel(v.channel), want.text)).length;
       const asSong = top.filter(v => Names.sameName(Names.split(v.title, v.channel).title, want.text)).length + (groups.some(g => (g.names || []).some(t => Names.sameName(t, want.text)) && g.jp >= 0.5 && g.rows.length >= 3) ? 2 : 0);
       const who = want.artistOnly ? want.artist : want.bare && byName >= 2 && byName > asSong ? want.text : '';
-      if (who && !want.artistOnly) { try { const mv = await YT.search(who + ' MV'); if (mv.length) vids = mv.concat(vids.filter(v => !mv.some(x => x.id === v.id))); } catch (e) {} }   // their music videos, not vlogs
+      if (who && !want.artistOnly) { try { const mv = await Tube.search(who + ' MV'); if (mv.length) vids = mv.concat(vids.filter(v => !mv.some(x => x.id === v.id))); } catch (e) {} }   // their music videos, not vlogs
       if (who) {
         const cased = /[a-z]/.test(who) && /[A-Z]/.test(who), raw = x => String(x || '').replace(/\s+/g, '');
         const theirs = v => cased ? raw(vArtist(v)).indexOf(raw(who)) !== -1 || raw(v.channel).indexOf(raw(who)) !== -1 || raw(v.title).indexOf(raw(who)) !== -1 : Names.simName(vArtist(v), who) >= 0.8 || Names.sameName(Names.channel(v.channel), who);
@@ -16625,7 +16661,7 @@ const Maker = {
     let group = ranked.length ? ranked[0].g : null, chosen = null;
     const vidOf = (g, from) => (from || vids).find(v => { const t = this.songOf(v, want.anime); return t && this.close(g, t); }) || null;
     const option = x => { const v = vidOf(x.g, list && list.vids), th = v && Names.theme(v.title);
-      return { title: x.g.title, artist: x.g.artist, timed: x.g.synced.length > 0, lines: x.g.rows[0].lines, note: [th && list && list.by === 'anime' ? th.kind + (th.n ? ' ' + th.n : '') : '', v && v.views ? YT.views(v.views) : ''].filter(Boolean).join(' · ') }; };
+      return { title: x.g.title, artist: x.g.artist, timed: x.g.synced.length > 0, lines: x.g.rows[0].lines, note: [th && list && list.by === 'anime' ? th.kind + (th.n ? ' ' + th.n : '') : '', v && v.views ? Tube.views(v.views) : ''].filter(Boolean).join(' · ') }; };
     const ask = async (xs, q) => {
       step('find', 'ask', q);
       const k = await ui.choose(xs.map(option));
@@ -16671,7 +16707,7 @@ const Maker = {
       const skip = [want.artist, group.artist].concat(group.artists.slice(0, 3));
       learned = this.learn(vids, group.title, skip);
       if (!learned.aliases.some(a => Names.simName(a, group.title) >= 0.5) && JP.hasJapanese(group.title)) {
-        try { const more = await YT.search(group.title + ' lyrics'); vids = vids.concat(more.filter(v => !vids.some(x => x.id === v.id))); learned = this.learn(vids, group.title, skip); } catch (e) {}
+        try { const more = await Tube.search(group.title + ' lyrics'); vids = vids.concat(more.filter(v => !vids.some(x => x.id === v.id))); learned = this.learn(vids, group.title, skip); } catch (e) {}
       }
       if (learned.aliases.length) { want.romaji = uniq((want.romaji || []).concat(learned.aliases)); R.notes.push('also called ' + learned.aliases.join(', ')); }
       if (!want.anime && learned.anime) want.animeSeen = learned.anime;
@@ -16704,7 +16740,7 @@ const Maker = {
       if ((!scored.length || !ownVideo(scored[0])) && req.kind !== 'yt' && !R.searchedAgain) {
         try {
           R.searchedAgain = true;
-          const more = await YT.search([artist, songTitle].filter(Boolean).join(' '));
+          const more = await Tube.search([artist, songTitle].filter(Boolean).join(' '));
           vids = vids.concat(more.filter(v => !vids.some(x => x.id === v.id)));
           const again = this.learn(vids, songTitle, [artist].concat(group ? group.artists.slice(0, 3) : []));
           fitWant.alts = uniq(fitWant.alts.concat(again.aliases));
@@ -16712,7 +16748,7 @@ const Maker = {
         } catch (e) { R.notes.push('video search: ' + (e.message || e)); }
       }
       if (scored.length && scored[0].s > 2) { video = Object.assign({}, scored[0].v); video.start = video.fromPage ? (asl.yt.start || 0) : 0; }
-      if (video && !video.duration) { try { const inf = await YT.info(video.id); video.duration = inf.duration; video.title = video.title || inf.title; video.channel = video.channel || inf.channel; } catch (e) {} }
+      if (video && !video.duration) { try { const inf = await Tube.info(video.id); video.duration = inf.duration; video.title = video.title || inf.title; video.channel = video.channel || inf.channel; } catch (e) {} }
       // timed lyrics exist only for another length (often the anime's TV size): a good video of that length keeps the words in time
       if (video && group && video.duration && !video.fromPage) {
         const t0 = this.pickTiming(group, video.duration);
@@ -16785,6 +16821,99 @@ const Maker = {
     R.ms = Date.now() - T0;
     R.lesson = m.id;
     if (later && AI.available()) this.translateLater(m);
+    return R;
+  },
+  /** A lesson from a song file the learner has, with no video: its tags (or its name) say which song; LRCLIB's entry of
+      the file's own length gives the lyrics timed to it; the English comes from animesonglyrics.com when it has the
+      song. it: { file, name, entry (a media-folder entry, or none), meta (Shelf.meta), title, artist (the learner's
+      own answer to "which song is it?") }. Errors with .words: no lyrics were found (the learner can name the song or
+      paste the words). */
+  async fromFile(it, ui) {
+    ui = ui || {};
+    const step = (id, state, text) => { try { if (ui.step) ui.step(id, state, text); } catch (e) {} };
+    const T0 = Date.now(), R = { input: it.name, kind: 'file', notes: [] };
+    if (!Offline.ready()) { step('understand', 'work', 'Opening the dictionary…'); try { await Offline.load(); } catch (e) {} }
+    const meta = it.meta || await Shelf.meta(it.file, it.name);
+    const dur = await Shelf.lengthOf(meta);
+    const title = Names.clean(it.title || meta.title || Shelf.stemOf(it.name)), artist = Names.clean(it.artist != null ? it.artist : (meta.artist || ''));
+    R.song = { title, artist, duration: dur };
+    step('understand', 'done', '“' + title + '”' + (artist ? ' · ' + artist : '') + (dur ? ' · ' + fmtClock(dur) : ''));
+
+    /* the lyrics: LRCLIB, the entry of this file's length first */
+    step('song', 'work', 'Looking for the lyrics…');
+    const names = [{ title, artist }];
+    if (!it.title) {
+      for (const n of (meta.names || []).slice(0, 4)) if (n && n !== title) names.push({ title: n, artist });
+      if (!artist) for (const a of (meta.artists || []).slice(0, 2)) if (a && a !== title) names.push({ title, artist: a });
+    }
+    let groups = [];
+    try { groups = await this.lrcFind(names, 8); } catch (e) { R.notes.push('LRCLIB: ' + (e.message || e)); if (e && e.code === 'network') throw e; }
+    if (!groups.length && this._lrcDown) throw Object.assign(new Error('The lyrics library (LRCLIB) could not be reached.'), { code: 'network' });
+    const titles = uniq([title].concat(it.title ? [] : meta.names || [])).filter(Boolean);
+    const want = { text: [artist, title].filter(Boolean).join(' '), title, artist, alts: titles, romaji: [], bare: !artist && !meta.tagged };
+    const scored = groups.map(g => {
+      const ts = Math.max(0, ...g.titles.slice(0, 4).map(t => Math.max(...titles.map(w => Names.simName(t, w)))), ...(g.names || []).slice(0, 4).map(t => Math.max(...titles.map(w => Names.simName(t, w)))));
+      const as = artist ? Math.max(0, ...g.artists.slice(0, 3).map(a => Names.sameName(a, artist) ? 1 : Names.simName(a, artist))) : 0;
+      const t = this.pickTiming(g, dur);
+      let s = this.scoreGroup(g, want, []);
+      if (t && t.fit === 'sure') s += 3; else if (t && t.fit === 'near') s += 1.5;
+      return { g, s, t, ts, as };
+    }).filter(x => x.ts >= 0.75 || (x.ts >= 0.6 && x.as >= 0.85 && x.t && x.t.fit === 'sure')).sort((a, b) => b.s - a.s);
+    const best = scored[0] || null;
+    const timing = best ? best.t : null;
+    R.timing = timing ? { fit: timing.fit, diff: timing.diff, duration: timing.row.duration, synced: timing.row.synced } : null;
+    step('song', best ? 'done' : 'warn', best ? '“' + best.g.title + '”' + (best.g.artist ? ' · ' + best.g.artist : '') + (timing && timing.row.synced ? (timing.fit === 'sure' ? ' · timed to your file' : timing.fit === 'near' ? ' · timed (close to your file)' : ' · timed for a ' + fmtClock(timing.row.duration) + ' version') : ' · not timed') : 'Not in the synced-lyrics library; trying the lyrics site…');
+
+    /* the English (and the words, when LRCLIB has none) */
+    step('translate', 'work', 'Looking for an English translation…');
+    let asl = null;
+    try { asl = await this.aslFind([{ title: best ? best.g.title : title, artist: best ? best.g.artist : artist, romaji: titles.filter(n => !JP.hasJapanese(n)), anime: '' }], best ? [best.g.sig] : null); }
+    catch (e) { R.notes.push('animesonglyrics: ' + (e.message || e)); }
+    if (!best && asl && Math.max(...titles.map(w => Names.simName(asl.title || '', w))) < 0.75) asl = null;   // only the song asked for
+
+    let parsed = null, timedFrom = '';
+    if (timing && timing.row.synced) { parsed = JP.parseTranscript(timing.row.text, 'lyrics.lrc', { lyrics: true }); timedFrom = 'LRCLIB'; }
+    if ((!parsed || !parsed.lines.length) && asl) parsed = JP.parseTranscript(asl.kanji.join('\n'), 'lyrics.txt', { lyrics: true });
+    if ((!parsed || !parsed.lines.length) && best) { const r = best.g.rows.find(x => x.jp >= 0.5) || best.g.rows[0]; parsed = JP.parseTranscript(r.text, r.synced ? 'lyrics.lrc' : 'lyrics.txt', { lyrics: true }); }
+    if (!parsed || !parsed.lines.length) throw Object.assign(new Error('No lyrics were found for “' + title + '”' + (artist ? ' by ' + artist : '') + '.'), { words: true, guess: { title, artist } });
+    const lines = parsed.lines.map(l => { const x = { a: l.a, b: l.b, jp: l.jp }; if (l.gap) x.gap = 1; return x; }).slice(0, 1500);
+    const timed = !!parsed.timed;
+    let nEn = 0;
+    if (asl && asl.hasEnglish) {
+      const en = Align.english(lines.map(l => l.jp), asl);
+      lines.forEach((l, i) => { if (en[i]) { l.en = en[i]; l.enSrc = ASL.SITE + (en.approx || (en.approxLines && en.approxLines[i]) ? ', matched by position' : ''); nEn++; } });
+    }
+    R.lines = lines.length; R.timed = timed; R.english = { lines: nEn, of: lines.length };
+    step('translate', nEn ? 'done' : 'warn', nEn ? nEn + ' of ' + lines.length + ' lines have a person’s translation' : AI.available() ? AI.name() + ' will translate the lines in the background.' : 'No translation found online.');
+
+    /* the lesson, playing the learner's own file */
+    step('build', 'work', 'Building the lesson…');
+    const credit = [asl ? 'Lyrics' + (nEn ? ' and English translation' : '') + ': animesonglyrics.com' : '', timedFrom || (best && !asl) ? (asl ? 'timing' : 'Lyrics' + (timed ? ' and timing' : '')) + ': LRCLIB' : ''].filter(Boolean).join(' · ');
+    const isVideo = /^video\//.test(it.file.type || '') || /\.(mp4|webm|mkv|mov|m4v)$/i.test(it.name);
+    // a name like "Title - Artist" can be read the wrong way round: the lyrics library's names win when the tags say nothing
+    const mArtist = best && best.g.artist && (!meta.tagged || !artist) && (!artist || Names.simName(artist, best.g.artist) < 0.7) ? best.g.artist : artist;
+    const m = Lib.newMedia({ title: meta.tagged || it.title || !best ? title : best.g.title, artist: mArtist || (best ? best.g.artist : ''), type: 'song', lines, timed, stageSize: Game.p.settings.stageSize || 0, credit, isVideo });
+    if (asl) m.source = asl.url; else if (best) m.source = 'https://lrclib.net/';
+    if (timing && timed) { m.lrcDur = timing.row.duration || 0; if (timing.fit === 'off') m.fileOff = 1; }
+    m.fileDur = dur || 0;
+    m.made = { at: now(), from: 'file', input: it.name.slice(0, 200) };
+    let e = it.entry || null;
+    if (!e) e = await Shelf.toFolder(it.file, Shelf.safeName([m.artist, m.title].filter(Boolean).join(' - ')) + ((it.name.match(/\.[^.]+$/) || [''])[0]));
+    m.fileName = e ? e.name : it.name; m.filePath = e ? e.path : ''; m.fileSize = it.file.size || 0;
+    await Lib.create(m);
+    Player.attach(m.id, it.file);
+    if (!e || Folder.perm === 'session') await MediaCache.put(m.id, it.file);
+    Game.touch();
+    step('build', 'done', plural(m.stages.length, 'stage') + (e ? ' · plays from your media folder' : Shelf.kept.has(m.id) ? ' · kept in this browser for offline' : ''));
+
+    /* breakdown, plan, word timing */
+    step('plan', 'work', 'Breaking down every line and writing the plan…');
+    try { for (let n = 0; n < m.stages.length; n++) await Offline.stage(m, n); } catch (err) { R.notes.push('breakdown: ' + (err.message || err)); }
+    try { m.plan = await Plan.make(m); await Lib.save(m); } catch (err) { console.warn(err); }
+    step('plan', 'done', m.plan ? m.plan.summary : 'Ready.');
+    if (timed && Game.p.settings.autoWords !== false) WordTime.queue(m);
+    if (lines.length - nEn > 0 && AI.available()) this.translateLater(m);
+    R.lesson = m.id; R.ms = Date.now() - T0;
     return R;
   },
   /** A file in the media folder that is this song (attached so the lesson works offline). */
@@ -17367,6 +17496,7 @@ const Shelf = {
       const files = Array.from(e.target.files || []); e.target.value = '';
       if (!files.length) return;
       toast('Looking at ' + plural(files.length, 'file') + '…');
+      if (Batch.available()) { const r = await Batch.addFiles(files); if (onDone) onDone(r); else App.render(false); return; }
       const r = await this.take(files);
       this.report(r);
       if (onDone) onDone(r); else App.render(false);
@@ -17400,7 +17530,12 @@ const Shelf = {
     } finally { this._busy = false; }
   },
   /** Folder files (and ZIPs) that belong to lessons without a file: attach them. */
-  async lookAround(quiet) {
+  lookAround(quiet) {
+    if (this._lookP) return this._lookP;
+    this._lookP = this._look(quiet).catch(e => console.warn('look', e)).then(() => { this._lookP = null; });
+    return this._lookP;
+  },
+  async _look(quiet) {
     if (this._looking || !Folder.connected()) return;
     const lessons = Lib.list.filter(m => this.needs(m));
     if (!lessons.length) return;
@@ -17456,6 +17591,329 @@ const Shelf = {
       }
     } catch (e) {}
     return out;
+  }
+};
+
+/* ===== 55-batch.js ===== */
+/* ---------- 55-batch: many songs in, a lesson for each ----------
+   The learner drops or chooses any number of songs (files, a folder, album ZIPs). Each becomes a lesson by itself,
+   one after another in the background, from the song's own file (no video needed): lyrics timed to the file, English,
+   a plan, every word timed. The first lessons can be opened while the rest are made; the list survives a reload.
+   Files that belong to lessons already made attach to them instead, and the same file is never made twice. */
+'use strict';
+
+const Batch = {
+  KEY: 'batch', items: [], running: false, paused: '', _files: new Map(), _ui: new Set(), _told: false,
+
+  available() { return !!BUILD.local; },
+  async init() {
+    if (!this.available()) return;
+    try {
+      const s = await Store.get(this.KEY);
+      if (s && Array.isArray(s.items)) this.items = s.items.filter(x => x && x.id && (x.state !== 'done' || now() - (x.at || 0) < 3 * 86400000));
+    } catch (e) {}
+    for (const it of this.items) if (it.state === 'work') it.state = 'wait';
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => { if (this.paused === 'offline') { this.paused = ''; this.run(); } });
+      Bus.on('folder', () => { if (this.paused === 'folder' && Folder.connected()) { this.paused = ''; this.run(); } });
+      this.dropZone();
+    }
+    if (this.items.some(x => x.state === 'wait')) setTimeout(() => this.run(), 1500);
+  },
+  save() { Store.set(this.KEY, { items: this.items.map(x => { const o = Object.assign({}, x); delete o.step; return o; }) }); },
+  changed() { for (const f of Array.from(this._ui)) { try { f(); } catch (e) { this._ui.delete(f); } } },
+  counts() {
+    const c = { wait: 0, work: 0, done: 0, words: 0, fail: 0 };
+    for (const x of this.items) c[x.state] = (c[x.state] || 0) + 1;
+    c.all = this.items.length; c.open = c.wait + c.work;
+    return c;
+  },
+
+  /* ----- in ----- */
+  /** Files chosen or dropped: songs, videos, album ZIPs, a whole folder. Lyrics or subtitle files with the same names
+      go with their songs. Returns { queued, attached, skipped }. */
+  async addFiles(list, o) {
+    o = o || {};
+    const media = [], texts = new Map(), zips = [];
+    for (const f of Array.from(list || [])) {
+      const name = f.name || 'file', rel = f.webkitRelativePath || f._rel || name;
+      if (/\.zip$/i.test(name)) zips.push(f);
+      else if (Folder.MEDIA.test(name)) media.push({ file: f, name, rel });
+      else if (Folder.TEXT.test(name)) texts.set(this.stem(rel), f);
+    }
+    for (const z of zips) {
+      try {
+        for (const ent of await Zip.list(z)) {
+          if (/(^|\/)__MACOSX\//.test(ent.name)) continue;
+          const base = ent.name.replace(/^.*\//, '');
+          if (Folder.MEDIA.test(base)) { const blob = await Zip.blob(z, ent); media.push({ file: new File([blob], base, { type: blob.type || '' }), name: base, rel: base, album: z.name.replace(/\.zip$/i, '') }); }
+          else if (Folder.TEXT.test(base)) { const blob = await Zip.blob(z, ent); texts.set(this.stem(base), new File([blob], base)); }
+        }
+      } catch (err) { toast(String(err.message || err), 'bad'); }
+    }
+    for (const it of media) { const t = texts.get(this.stem(it.rel)) || texts.get(this.stem(it.name)); if (t) it.side = t; }
+    const out = { queued: 0, attached: 0, skipped: 0 };
+    if (!media.length) { if (!o.quiet) toast(zips.length || texts.size ? 'No songs or videos were in what you chose.' : 'Those were not songs or videos.', ''); return out; }
+    // the same file again, or already a lesson: nothing to do
+    const fresh = media.filter(it => {
+      const dup = this.items.some(x => x.name === it.name && x.size === it.file.size && x.state !== 'fail')
+        || Lib.list.some(m => m.fileName && (m.fileName === it.name || this.stem(m.fileName) === this.stem(it.name)) && (!m.fileSize || !it.file.size || m.fileSize === it.file.size) && !Shelf.needs(m));
+      if (dup) out.skipped++;
+      return !dup;
+    });
+    // songs of lessons that have no file yet: they get theirs
+    const pairs = await Shelf.match(fresh.filter(it => !it.side), Lib.list.filter(m => Shelf.needs(m)));
+    for (const p of pairs) {
+      // a track from an album ZIP gets a clear name in the folder; files the learner named keep their names
+      const ext = (p.it.name.match(/\.[^.]+$/) || [''])[0];
+      await Shelf.attach(p.m, p.it.file, { meta: p.it.meta, saveAs: p.it.album ? Shelf.safeName([p.m.artist, p.m.title].filter(Boolean).join(' - ')) + ext : null });
+      out.attached++;
+    }
+    for (const it of fresh) {
+      if (pairs.some(p => p.it === it)) continue;
+      const item = { id: uid(), name: it.name, size: it.file.size || 0, state: 'wait', added: now() };
+      const e = await Shelf.toFolder(it.file, it.album ? it.name : it.rel.split('/').pop(), it.album || '');
+      if (e) item.path = e.path;
+      else if (await MediaCache.put('q:' + item.id, it.file)) item.kept = 1;
+      this._files.set(item.id, it.file);                     // this visit, whatever happens to the copies
+      if (it.side) { try { item.sideText = (await readTextFile(it.side)).slice(0, 400000); item.sideName = it.side.name; } catch (err) {} }
+      this.items.push(item); out.queued++;
+    }
+    if (out.queued) { this.save(); this.changed(); this.run(); }
+    if (pairs.length || out.queued) Bus.emit('folder');
+    if (!o.quiet) this.report(out);
+    return out;
+  },
+  /** Media-folder files without a lesson (the folder card's "Make lessons for all"). */
+  addEntries(entries) {
+    let n = 0;
+    for (const e of entries) {
+      if (Folder.lessonFor(e) || this.items.some(x => x.path === e.path && x.state !== 'fail')) continue;
+      const item = { id: uid(), name: e.name, size: e.file ? e.file.size : 0, path: e.path, state: 'wait', added: now() };
+      this.items.push(item);
+      if (e.file) {
+        this._files.set(item.id, e.file);
+        // chosen on a phone: gone after a reload, so a copy waits in the browser until its lesson is made
+        if (Folder.perm === 'session') MediaCache.put('q:' + item.id, e.file).then(ok => { if (!ok) return; if (this.items.indexOf(item) !== -1 && item.state !== 'done') { item.kept = 1; this.save(); } else MediaCache.del('q:' + item.id); });
+      }
+      n++;
+    }
+    if (n) { this.save(); this.changed(); this.run(); toast(n === 1 ? 'Making the lesson: it is listed under “Making lessons”.' : 'Making ' + n + ' lessons, one after another. Open each as soon as it is ready.', 'good'); }
+    return n;
+  },
+  report(r) {
+    const bits = [];
+    if (r.queued) bits.push(r.queued === 1 ? 'Making a lesson from your song' : 'Making ' + r.queued + ' lessons, one after another: open each as soon as it is ready');
+    if (r.attached) bits.push(r.attached === 1 ? 'one song went to the lesson it belongs to' : r.attached + ' songs went to the lessons they belong to');
+    if (r.skipped) bits.push(r.skipped === 1 ? 'one was already a lesson' : r.skipped + ' were already lessons');
+    const msg = bits.join('; ');
+    if (msg) toast(msg.charAt(0).toUpperCase() + msg.slice(1) + '.', r.queued || r.attached ? 'good' : '');
+  },
+  stem(p) { return String(p || '').replace(/\.[^./\\]+$/, '').toLowerCase(); },
+
+  /* ----- the work ----- */
+  async source(it) {
+    let f = this._files.get(it.id) || null, entry = null;
+    if (it.path) {
+      entry = Folder.entries.get(it.path) || null;
+      if (!entry && !f) {
+        if (Folder.handle && !Folder.connected()) return 'folder';
+        if (Folder.connected()) { try { await Folder.scan(); } catch (e) {} entry = Folder.entries.get(it.path) || null; }
+      }
+      if (entry && !f) { try { f = await Folder.fileOf(entry); } catch (e) { return Folder.connected() ? null : 'folder'; } }
+    }
+    if (!f && it.kept) { try { const rec = await MediaCache.get('q:' + it.id); if (rec && rec.blob) f = new File([rec.blob], it.name, { type: rec.type || rec.blob.type || '' }); } catch (e) {} }
+    return f ? { file: f, entry } : null;
+  },
+  async run() {
+    if (this.running || this.paused === 'user') return;
+    this.running = true; this.changed();
+    try {
+      for (;;) {
+        const it = this.items.find(x => x.state === 'wait');
+        if (!it) break;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) { this.paused = 'offline'; break; }
+        it.state = 'work'; it.step = 'Opening the file…'; this.changed();
+        const src = await this.source(it);
+        if (src === 'folder') { it.state = 'wait'; it.step = ''; this.paused = 'folder'; break; }
+        if (!src) { it.state = 'fail'; it.note = 'The file is not there any more.'; this.save(); this.changed(); continue; }
+        try {
+          const m = await this.make(it, src);
+          it.state = 'done'; it.mid = m.id; it.title = m.title; it.at = now(); it.note = '';
+          it.timed = !!m.timed; it.en = m.lines.filter(l => l.en).length; it.lines = m.lines.length;
+          if (it.kept) { MediaCache.del('q:' + it.id); it.kept = 0; }
+          this._files.delete(it.id);
+          if (!this._told) {
+            this._told = true;
+            toast('“' + m.title + '” is ready: you can start learning it now' + (this.counts().wait ? ' while the others are made.' : '.'), 'good');
+          }
+        } catch (err) {
+          console.warn('batch', it.name, err);
+          if (err && err.code === 'network') {
+            const off = typeof navigator !== 'undefined' && navigator.onLine === false;
+            if (off) { it.state = 'wait'; this.paused = 'offline'; }
+            else { it.state = 'fail'; it.note = 'The lyrics library could not be reached. Try again in a moment.'; }
+          }
+          else if (err && err.words) { it.state = 'words'; it.guess = err.guess || null; it.note = err.message; }
+          else { it.state = 'fail'; it.note = String((err && err.message) || err).slice(0, 200); }
+        }
+        it.step = '';
+        this.save(); this.changed();
+        if (this.paused) break;
+        Bus.emit('folder');
+        await sleep(300);
+      }
+    } finally {
+      this.running = false; this.changed();
+      if (App.cur === 'library' || App.cur === 'today') App.render(false);
+    }
+  },
+  /** One lesson: from a lyrics or subtitle file beside the song when there is one, otherwise found online. */
+  async make(it, src) {
+    let sideText = it.sideText || '', sideName = it.sideName || '';
+    if (!sideText && src.entry) { const sd = Folder.sidecars(src.entry)[0]; if (sd) { try { sideText = await readTextFile(await Folder.fileOf(sd)); sideName = sd.name; } catch (e) {} } }
+    if (sideText) {
+      const parsed = JP.parseTranscript(sideText, sideName || 'lyrics.txt');
+      if (parsed.lines.length) {
+        it.step = 'Using “' + sideName + '”…'; this.changed();
+        if (!Offline.ready()) { try { await Offline.load(); } catch (e) {} }
+        const nm = Folder.titleOf(src.entry || { name: it.name, path: it.name });
+        const e = src.entry || await Shelf.toFolder(src.file, it.name) || { name: it.name, path: '', file: src.file };
+        const m = await Views.library.makeLesson(e, { title: nm.title, artist: nm.artist, type: /\.(srt|ass|ssa|vtt)$/i.test(sideName) ? 'anime' : 'song', parsed, credit: '' });
+        Player.attach(m.id, src.file);
+        if (!e.path || Folder.perm === 'session') await MediaCache.put(m.id, src.file);
+        for (let n = 0; n < m.stages.length; n++) { it.step = 'Breaking down stage ' + (n + 1) + ' of ' + m.stages.length + '…'; this.changed(); try { await Offline.stage(m, n); } catch (err) {} }
+        try { m.plan = await Plan.make(m); await Lib.save(m); } catch (err) {}
+        if (m.timed && m.type === 'song' && Game.p.settings.autoWords !== false) WordTime.queue(m);
+        return m;
+      }
+    }
+    const R = await Maker.fromFile({ file: src.file, name: it.name, entry: src.entry, title: it.guess && it.guess.user ? it.guess.title : null, artist: it.guess && it.guess.user ? it.guess.artist : null },
+      { step: (id, st, text) => { if (st === 'work' || st === 'done') { it.step = text; this.changed(); } } });
+    return Lib.get(R.lesson);
+  },
+  retry(it, guess) {
+    if (guess) it.guess = Object.assign({ user: 1 }, guess);
+    it.state = 'wait'; it.note = ''; this.save(); this.changed(); this.run();
+  },
+  remove(it) {
+    this.items = this.items.filter(x => x !== it);
+    if (it.kept) MediaCache.del('q:' + it.id);
+    this._files.delete(it.id);
+    this.save(); this.changed();
+  },
+  clearDone() { this.items = this.items.filter(x => x.state !== 'done'); this.save(); this.changed(); },
+
+  /* ----- on screen ----- */
+  /** The "Add your songs" card: a drop zone, a picker for many files, and one for a whole folder. */
+  addCard() {
+    if (!this.available()) return null;
+    const multi = h('input.visually-hidden', { type: 'file', id: 'batch-files', multiple: true, accept: 'audio/*,video/*,.mp3,.m4a,.aac,.flac,.ogg,.opus,.wav,.mp4,.webm,.mkv,.mov,.zip,.lrc,.srt,.ass,.vtt,.txt,application/zip', onchange: e => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) this.addFiles(fs); } });
+    const dir = PhoneApp.mobile ? null : h('input.visually-hidden', { type: 'file', id: 'batch-dir', webkitdirectory: true, multiple: true, onchange: e => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) this.addFiles(fs); } });
+    const zone = h('div.batch-drop', { tabindex: -1 },
+      h('div', h('h2', duo('曲を追加', 'Add your songs')),
+        h('p.sub', 'Drop songs here (files, a folder or an album ZIP), or choose them. Every song becomes a lesson by itself, one after another: lyrics timed to your file, English, a plan and each word timed. No video needed, and it all plays offline. Start learning as soon as the first is ready.')),
+      h('div.btn-row', h('label.btn.primary', { for: 'batch-files' }, icon('upload', 16), h('span', 'Choose songs')), multi,
+        dir ? h('label.btn', { for: 'batch-dir' }, icon('upload', 16), h('span', 'Choose a folder')) : null, dir));
+    zone.addEventListener('dragover', e => { if (this.hasFiles(e)) { e.preventDefault(); zone.classList.add('over'); } });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', e => { zone.classList.remove('over'); });      // the page-wide handler takes the files
+    return h('section.batch-card', zone, this.panel());
+  },
+  /** The list of lessons being made: live, with what each one needs. */
+  panel() {
+    const box = h('div.batch-panel');
+    const draw = () => {
+      if (!box.isConnected && box._drawn) { this._ui.delete(draw); return; }
+      box._drawn = true;
+      const c = this.counts();
+      if (!c.all) { clear(box); return; }
+      const head = h('div.batch-head',
+        h('div', h('h3', c.open ? 'Making lessons' : 'Lessons made'),
+          h('p.sub', [c.done ? c.done + ' of ' + c.all + ' ready' : null, c.work ? 'one in progress' : null, c.wait ? c.wait + ' waiting' : null, c.words ? c.words + ' need' + (c.words === 1 ? 's' : '') + ' you' : null, c.fail ? c.fail + ' failed' : null].filter(Boolean).join(' · ')
+            + (this.paused === 'offline' ? ' · paused: no internet (it carries on when the connection is back)' : this.paused === 'folder' ? ' · paused: allow access to your media folder again (Library)' : this.paused === 'user' ? ' · paused' : ''))),
+        h('div.btn-row',
+          c.open ? (this.paused === 'user' ? btn('Resume', { cls: 'small', icon: 'play', onclick: () => { this.paused = ''; this.run(); this.changed(); } }) : btn('Pause', { cls: 'small ghost', onclick: () => { this.paused = 'user'; this.changed(); } })) : null,
+          c.done ? btn('Clear the finished', { cls: 'small ghost', onclick: () => this.clearDone() }) : null));
+      const list = h('ul.batch-list');
+      const order = { work: 0, words: 1, fail: 2, wait: 3, done: 4 };
+      const shown = this.items.slice().sort((a, b) => (order[a.state] - order[b.state]) || ((a.state === 'done' ? (b.at || 0) - (a.at || 0) : (a.added || 0) - (b.added || 0)))).slice(0, 60);
+      for (const it of shown) list.appendChild(this.row(it));
+      if (this.items.length > 60) list.appendChild(h('li.fine', '… and ' + (this.items.length - 60) + ' more'));
+      mount(box, head, list);
+    };
+    this._ui.add(draw);
+    draw();
+    return box;
+  },
+  row(it) {
+    const st = { wait: 'waiting', work: it.step || 'working…', done: 'ready', words: 'needs you', fail: 'did not work' }[it.state] || it.state;
+    const kids = [h('div.br-main', h('b.jp', { lang: 'ja' }, it.title || Shelf.stemOf(it.name)), h('span.fine', it.name),
+      h('span.batch-st.' + it.state, st + (it.state === 'done' ? ' · ' + plural(it.lines || 0, 'line') + (it.timed ? ', timed' : ', not timed yet') + (it.en ? ', ' + it.en + ' in English' : '') : ''), it.note && it.state !== 'done' ? ' · ' + it.note : ''))];
+    const acts = h('div.btn-row');
+    if (it.state === 'done' && Lib.get(it.mid)) acts.appendChild(btn('Open', { cls: 'small primary', icon: 'play', onclick: () => App.go('theater', { id: it.mid }) }));
+    if (it.state === 'words') {
+      const g = it.guess || {};
+      const ti = h('input', { type: 'text', value: g.title || '', placeholder: 'Song title', lang: 'ja', 'aria-label': 'Song title' });
+      const ar = h('input', { type: 'text', value: g.artist || '', placeholder: 'Artist', 'aria-label': 'Artist' });
+      kids.push(h('div.batch-ask', h('span.fine', 'Which song is it? Check the name, then look again, or add the words yourself.'), h('div.batch-ask-row', ti, ar,
+        btn('Look again', { cls: 'small primary', onclick: () => { if (ti.value.trim()) this.retry(it, { title: ti.value.trim(), artist: ar.value.trim() }); } }),
+        btn('Add the words', { cls: 'small', onclick: () => this.addWords(it) }))));
+    }
+    if (it.state === 'fail') acts.appendChild(btn('Try again', { cls: 'small', icon: 'sync', onclick: () => this.retry(it) }));
+    if (it.state !== 'work') acts.appendChild(btn('', { cls: 'small ghost icon-only', icon: 'x', aria: 'Remove from the list', title: 'Remove from the list', onclick: () => this.remove(it) }));
+    return h('li.batch-row.' + it.state, kids, acts);
+  },
+  /** No lyrics found: the import form with the song's file, to paste or choose the words. */
+  async addWords(it) {
+    const src = await this.source(it);
+    if (!src || src === 'folder') { toast('The file cannot be opened right now.', 'bad'); return; }
+    if (src.entry) { Views.import.S = null; App.go('import', { entry: src.entry }); this.remove(it); return; }
+    Views.import.S = { title: (it.guess && it.guess.title) || Shelf.stemOf(it.name), artist: (it.guess && it.guess.artist) || '', type: 'song', file: src.file, text: '', srcName: '', parsed: null, removed: new Set(), stageSize: Game.p.settings.stageSize || 0, busy: false };
+    this.remove(it);
+    App.go('import');
+  },
+  /** Songs dropped anywhere in the game go here (with an outline on the page while they are held over it). */
+  dropZone() {
+    let depth = 0;
+    const veil = () => document.body.classList.toggle('drop-on', depth > 0);
+    window.addEventListener('dragenter', e => { if (this.hasFiles(e)) { depth++; veil(); } });
+    window.addEventListener('dragleave', e => { if (this.hasFiles(e)) { depth = Math.max(0, depth - 1); veil(); } });
+    window.addEventListener('dragover', e => { if (this.hasFiles(e)) e.preventDefault(); });
+    window.addEventListener('drop', async e => {
+      if (!this.hasFiles(e)) return;
+      e.preventDefault(); depth = 0; veil();
+      const files = await this.dropped(e.dataTransfer);
+      if (!files.length) return;
+      if (App.cur !== 'library') App.go('library');
+      this.addFiles(files);
+    });
+  },
+  hasFiles(e) { const t = e.dataTransfer; return !!(t && Array.from(t.types || []).indexOf('Files') !== -1); },
+  /** Dropped files, with the files inside dropped folders. */
+  async dropped(dt) {
+    const out = [], items = Array.from(dt.items || []);
+    const entries = items.map(i => i.webkitGetAsEntry ? i.webkitGetAsEntry() : null).filter(Boolean);
+    if (!entries.length) return Array.from(dt.files || []);
+    const walk = async (ent, path, depth) => {
+      if (ent.isFile) { const f = await new Promise(res => ent.file(res, () => res(null))); if (f) { try { f._rel = path + f.name; } catch (e) {} out.push(f); } return; }
+      if (!ent.isDirectory || depth > 3) return;
+      const rd = ent.createReader();
+      for (;;) {
+        const batch = await new Promise(res => rd.readEntries(res, () => res([])));
+        if (!batch.length) break;
+        for (const c of batch) await walk(c, path + ent.name + '/', depth + 1);
+      }
+    };
+    for (const ent of entries) await walk(ent, '', 0);
+    return out;
+  },
+  /** A line for the Today screen while lessons are being made, or just after. */
+  todayLine() {
+    const c = this.counts();
+    if (!c.open && !c.words) return null;
+    return h('section.batch-today', h('p', h('b', 'Making lessons from your songs: '), c.done + ' of ' + c.all + ' ready' + (c.words ? ', ' + c.words + ' need' + (c.words === 1 ? 's' : '') + ' you' : '') + '.'),
+      btn('See them', { cls: 'small', onclick: () => App.go('library') }));
   }
 };
 
@@ -18416,6 +18874,46 @@ class MediaFacade extends EventTarget {
   removeAttribute(n) { if (this.b.removeAttribute) this.b.removeAttribute(n); }
 }
 
+/* The copy opened from disk cannot show YouTube videos itself: YouTube wants to know the page that asks, and a page
+   on disk has no address. There the player lives in a small page on the game's website (yt.html), in a frame, driven
+   by messages. It answers like YouTube's own player object, so YTMedia does not need to know. */
+class RelayPlayer {
+  constructor(holder, o) {
+    this.o = o; this._t = 0; this._at = 0; this._d = 0; this._s = -1; this._r = 1; this._rates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+    this.frame = h('iframe.yt-relay', { src: RelayPlayer.page() + '#v=' + encodeURIComponent(o.videoId) + '&s=' + (o.start || 0), title: 'Music video',
+      allow: 'autoplay; encrypted-media; picture-in-picture', referrerpolicy: 'strict-origin-when-cross-origin' });
+    this.frame.style.cssText = 'width:100%;height:100%;border:0;display:block';
+    holder.replaceWith(this.frame);
+    const ev = o.events || {};
+    this._msg = e => {
+      if (e.source !== this.frame.contentWindow) return;
+      const d = e.data; if (!d || d.kt !== 'yt') return;
+      if (d.t != null) { this._t = +d.t || 0; this._at = performance.now(); }
+      if (d.d) this._d = +d.d;
+      if (d.ev === 'hello') this._hello = true;
+      else if (d.ev === 'ready') { clearTimeout(this._wait); if (d.rates && d.rates.length) this._rates = d.rates; if (ev.onReady) ev.onReady({ target: this }); }
+      else if (d.ev === 'state') { this._s = d.s; if (ev.onStateChange) ev.onStateChange({ data: d.s, target: this }); }
+      else if (d.ev === 'error') { clearTimeout(this._wait); if (ev.onError) ev.onError({ data: d.code, target: this }); }
+      else if (d.ev === 'rate') { this._r = +d.r || 1; if (ev.onPlaybackRateChange) ev.onPlaybackRateChange({ data: this._r, target: this }); }
+    };
+    window.addEventListener('message', this._msg);
+    // no answer at all (no internet, or the page could not load): say so rather than wait forever
+    this._wait = setTimeout(() => { if (ev.onError) ev.onError({ data: 'api', target: this }); }, 25000);
+  }
+  static page() { return ((typeof BUILD !== 'undefined' && BUILD.web) || 'https://xravia.github.io/kotonoha/').replace(/\/?$/, '/') + 'yt.html'; }
+  _send(cmd, x) { try { this.frame.contentWindow.postMessage(Object.assign({ kt: 'yt', cmd }, x || {}), new URL(RelayPlayer.page()).origin); } catch (e) {} }
+  playVideo() { this._send('play'); }
+  pauseVideo() { this._send('pause'); }
+  seekTo(t) { this._t = +t || 0; this._at = performance.now(); this._send('seek', { t: this._t }); }
+  getCurrentTime() { return this._s === 1 ? this._t + (performance.now() - this._at) / 1000 * this._r : this._t; }
+  getDuration() { return this._d; }
+  setPlaybackRate(r) { this._send('rate', { r }); }
+  getAvailablePlaybackRates() { return this._rates; }
+  setVolume(v) { this._send('vol', { v }); }
+  cueVideoById(o) { this._send('cue', { v: o.videoId, s: o.startSeconds || 0 }); }
+  destroy() { clearTimeout(this._wait); window.removeEventListener('message', this._msg); this.frame.remove(); }
+}
+
 /* A YouTube video behind the same face as a <video> element, using YouTube's IFrame player. Its clock is read
    every 200 ms and filled in between, so karaoke highlighting stays smooth. */
 class YTMedia extends EventTarget {
@@ -18435,6 +18933,8 @@ class YTMedia extends EventTarget {
       window.onYouTubeIframeAPIReady = () => { try { if (prev) prev(); } catch (e) {} res(window.YT); };
       const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; s.async = true;
       s.onerror = () => { YTMedia._api = null; rej(new Error('YouTube could not be reached')); };
+      // the script came but did not start (it defines window.YT at once): say so now rather than after the long wait
+      s.onload = () => setTimeout(() => { if (!window.YT) { YTMedia._api = null; rej(new Error('YouTube’s player script did not start')); } }, 50);
       document.head.appendChild(s);
       setTimeout(() => { if (!(window.YT && window.YT.Player)) { YTMedia._api = null; rej(new Error('YouTube did not answer')); } }, 20000);
     });
@@ -18445,7 +18945,13 @@ class YTMedia extends EventTarget {
     if (this.vid === vid && this.p) return;
     this.vid = vid; this._ready = false; this._state = -1; this._t = start || 0; this._dur = NaN; this.error = null;
     try {
-      const YT = await YTMedia.api();
+      if (!this.p && YTMedia.relay()) {
+        const ev = { onReady: () => this._onReady(), onStateChange: e => this._onState(e.data), onError: e => this._onError(e.data),
+          onPlaybackRateChange: e => { this._rate = e.data || this._rate; this.dispatchEvent(new Event('ratechange')); } };
+        this.p = new RelayPlayer(this.node.querySelector('.yt-frame'), { videoId: vid, start: start || 0, events: ev });
+        return;
+      }
+      const YT = YTMedia.relay() ? null : await YTMedia.api();
       if (this.vid !== vid) return;
       if (!this.p) {
         const vars = { playsinline: 1, rel: 0, modestbranding: 1, controls: 0, disablekb: 1, iv_load_policy: 3, fs: 0, cc_load_policy: 0 };
@@ -18472,7 +18978,9 @@ class YTMedia extends EventTarget {
     else if (s === 2) { this._stopPoll(); this.dispatchEvent(new Event('pause')); }
     else if (s === 0) { this._stopPoll(); this.dispatchEvent(new Event('pause')); this.dispatchEvent(new Event('ended')); }
   }
-  _onError(code) { this.error = { code, message: code === 101 || code === 150 || code === 153 ? 'embedding not allowed' : 'video unavailable' }; this._stopPoll(); this.dispatchEvent(new Event('error')); }
+  _onError(code) { this.error = { code, message: code === 101 || code === 150 || code === 153 ? 'embedding not allowed' : code === 'api' ? 'not reached' : 'video unavailable' }; this._stopPoll(); this.dispatchEvent(new Event('error')); }
+  /** Opened from disk: the video plays through the relay page on the game's website. */
+  static relay() { return typeof location !== 'undefined' && location.protocol === 'file:'; }
   _sync() { try { if (this.p && this.p.getCurrentTime) { this._t = this.p.getCurrentTime() || 0; this._at = performance.now(); } } catch (e) {} }
   _startPoll() { this._stopPoll(); this._poll = setInterval(() => { this._sync(); this.dispatchEvent(new Event('timeupdate')); }, 200); }
   _stopPoll() { if (this._poll) clearInterval(this._poll); this._poll = 0; }
@@ -18715,8 +19223,7 @@ const Bgm = {
   },
   /** Lessons that have something to play here. */
   candidates() {
-    const disk = typeof location !== 'undefined' && location.protocol === 'file:';
-    return Lib.list.filter(m => m.fileName || (m.yt && !disk)).map(m => m.id);
+    return Lib.list.filter(m => m.fileName || m.yt).map(m => m.id);           // videos play from disk too, through the relay
   },
   count() { return this.candidates().length; },
   async start(fromId) {
@@ -18739,7 +19246,7 @@ const Bgm = {
     let ok = false; try { ok = !!m && await Player.ensure(m); } catch (e) { ok = false; }
     const f = ok ? Player.info(m.id) : null;
     if (!this.on) return;
-    if (!f || (f.yt && location.protocol === 'file:')) return this.playAt(this.idx + 1, tries + 1);
+    if (!f) return this.playAt(this.idx + 1, tries + 1);
     this.flush();
     this.m = m; this.li = -1; this.docs = null; this.isVideo = !!(f.yt || f.isVideo);
     if (f.yt) {
@@ -19869,6 +20376,7 @@ Views.today = {
     const inst = PhoneApp.banner(); if (inst) page.appendChild(inst);
     if (!p.level) page.appendChild(this.welcome());
     page.appendChild(this.goal(d));
+    const making = Batch.todayLine(); if (making) page.appendChild(making);
     page.appendChild(this.plan());
     if (Views.make.available() && p.level) page.appendChild(h('section.make-today', h('h2', duo('新しい歌', 'Learn a new song')), makeBox({ id: 'today-make', label: 'Make a lesson', placeholder: 'Any song, “… opening”, or a YouTube link' })));
     page.appendChild(this.figures());
@@ -20013,6 +20521,8 @@ Views.library = {
         makeBox({ id: 'lib-make' }),
         h('p.fine', 'Or ', h('a', { href: '#', onclick: e => { e.preventDefault(); App.go('find', {}); } }, 'browse anime song lists'), ' on animesonglyrics.com.')));
     }
+    const add = Batch.addCard();
+    if (add) page.appendChild(add);
     const shelf = this.savedShelf();
     if (shelf) page.appendChild(shelf);
     const folderCard = this.folderCard();
@@ -20077,7 +20587,7 @@ Views.library = {
     const canPick = Folder.supported(), local = BUILD.local, phone = !canPick && PhoneApp.mobile;
     if (!local) return null;                       // the online copy runs in a frame that cannot open folders
     const fallbackIn = phone
-      ? h('input.visually-hidden', { type: 'file', id: 'lib-folder', multiple: true, accept: 'audio/*,video/*,.mp4,.m4a,.mp3,.webm,.mkv,.mov,.flac,.ogg,.opus,.wav,.lrc,.srt,.ass,.vtt,.txt,.json', onchange: e => { Folder.fromInput(e.target.files); e.target.value = ''; App.render(false); } })
+      ? h('input.visually-hidden', { type: 'file', id: 'lib-folder', multiple: true, accept: 'audio/*,video/*,.mp4,.m4a,.mp3,.webm,.mkv,.mov,.flac,.ogg,.opus,.wav,.lrc,.srt,.ass,.vtt,.txt,.json', onchange: async e => { const fs = Array.from(e.target.files || []); e.target.value = ''; Folder.fromInput(fs); App.render(false); await Shelf.lookAround(true); Batch.addEntries(Folder.media().filter(x => !Folder.lessonFor(x))); App.render(false); } })
       : h('input.visually-hidden', { type: 'file', id: 'lib-folder', webkitdirectory: true, multiple: true, onchange: e => { Folder.fromInput(e.target.files); App.render(false); } });
     if (phone) {
       const n = Folder.connected() ? Folder.media().length : 0;
@@ -20088,8 +20598,8 @@ Views.library = {
         h('div.folder-head', h('div', h('h2', duo('曲', 'Songs on this phone')),
           h('p.sub', n ? plural(n, 'song or episode', 'songs or episodes') + ' chosen.' : 'Choose songs or episodes on this phone, with any lyrics or subtitle files that have the same names. Each one becomes a lesson, and Kotonoha keeps a copy so it plays offline.')),
           h('div.btn-row', pick, fallbackIn)),
-        todo >= 2 ? h('div.folder-batch', h('p', h('b', plural(todo, 'file') + ' without a lesson. '), 'Kotonoha can make them all: it uses a lyrics file with the same name, or looks each song up in the synced-lyrics library and keeps only sure matches.'),
-          btn('Make lessons for all ' + todo, { cls: 'primary', icon: 'plus', onclick: () => this.batchLessons() })) : null,
+        todo >= 2 ? h('div.folder-batch', h('p', h('b', plural(todo, 'file') + ' without a lesson. '), 'Kotonoha can make them all in the background, one after another: a lyrics or subtitle file with the same name is used, otherwise each song’s lyrics are found online and timed to your file, with English and a plan. Open each as soon as it is ready.'),
+          btn('Make lessons for all ' + todo, { cls: 'primary', icon: 'plus', onclick: () => Batch.addEntries(Folder.media().filter(e => !Folder.lessonFor(e))) })) : null,
         rows.length ? h('ul.folder-list', rows) : null);
     }
     const pickBtn = canPick ? btn(Folder.handle ? 'Choose another folder' : 'Connect my media folder', { cls: Folder.handle ? 'small ghost' : 'primary', icon: 'upload', onclick: async () => {
@@ -20105,8 +20615,8 @@ Views.library = {
         pickBtn, canPick ? null : fallbackIn));
     const rows = Folder.connected() ? Folder.media().map(e => this.folderRow(e)) : [];
     const todo = Folder.connected() ? Folder.media().filter(e => !Folder.lessonFor(e)).length : 0;
-    const batch = todo >= 2 ? h('div.folder-batch', h('p', h('b', plural(todo, 'file') + ' without a lesson. '), 'Kotonoha can make them all: it uses a lyrics file with the same name, or looks each song up in the synced-lyrics library and keeps only sure matches.'),
-      btn('Make lessons for all ' + todo, { cls: 'primary', icon: 'plus', onclick: () => this.batchLessons() })) : null;
+    const batch = todo >= 2 ? h('div.folder-batch', h('p', h('b', plural(todo, 'file') + ' without a lesson. '), 'Kotonoha can make them all in the background, one after another: a lyrics or subtitle file with the same name is used, otherwise each song’s lyrics are found online and timed to your file, with English and a plan. Open each as soon as it is ready.'),
+      btn('Make lessons for all ' + todo, { cls: 'primary', icon: 'plus', onclick: () => Batch.addEntries(Folder.media().filter(e => !Folder.lessonFor(e))) })) : null;
     return h('section.folder-card', head, batch, rows.length ? h('ul.folder-list', rows) : null,
       Folder.connected() && !rows.length ? h('p.fine', 'No audio or video files were found in that folder. MP4, WebM, MKV, MP3, M4A, FLAC, OGG and WAV are recognised.') : null);
   },
@@ -21279,7 +21789,7 @@ Views.theater = {
   mediaPrompt() {
     const T = this.T, m = T.m;
     const pickId = 'th-pick';
-    const input = h('input.visually-hidden', { type: 'file', id: pickId, accept: 'audio/*,video/*,.mkv,.mp3,.m4a,.flac,.ogg,.opus,.wav,.mp4,.webm,.mov', onchange: e => {
+    const input = h('input.visually-hidden', { type: 'file', id: pickId, accept: 'audio/*,video/*,.mkv,.mp3,.m4a,.flac,.ogg,.opus,.wav,.mp4,.webm,.mov,.zip', onchange: e => {
       const f = e.target.files[0]; if (!f) return;
       Shelf.pickFor(m, f).then(r => { if (r && r.fit && r.fit.moved) toast('The lines were re-timed to fit your file.', 'good'); }).catch(err => toast(String(err.message || err), 'bad')).then(() => this.attachMedia());
     } });
@@ -21288,10 +21798,13 @@ Views.theater = {
     if (m.sample) kids.push(h('p.sub', 'A synthetic voice reads each line. Your own songs and episodes play right here.'));
     else if (ytBroken) {
       const err = Player.ytError() || {}, disk = typeof location !== 'undefined' && location.protocol === 'file:';
-      kids.push(h('p.sub', disk ? 'YouTube videos do not play in the copy opened from your computer\u2019s disk. They play in the web and phone version' + (BUILD.web ? ' (' + BUILD.web + ')' : '') + '.'
-        : err.message === 'embedding not allowed' ? 'Its owner only lets it play on YouTube itself.' : err.code === 'api' ? 'YouTube could not be reached. Check the connection and open the lesson again.' : 'YouTube says the video is unavailable.'));
-      kids.push(h('div.btn-row.center', h('a.btn.ghost', { href: 'https://www.youtube.com/watch?v=' + m.yt, target: '_blank', rel: 'noopener' }, 'Open it on YouTube'),
-        h('label.btn.primary', { for: pickId }, icon('upload', 16), h('span', 'Use my own file')), input));
+      kids.push(h('p.sub', err.code === 'api' ? 'YouTube could not be reached. Check the internet connection and open the lesson again. With the song as a file it plays offline.'
+        : disk && err.code === 153 ? 'YouTube will not play this video in the copy opened from your computer\u2019s disk. It plays in the web and phone version' + (BUILD.web ? ' (' + BUILD.web + ')' : '') + ', or add the song as a file and it plays here, offline.'
+        : err.message === 'embedding not allowed' ? 'Its owner only lets it play on YouTube itself. Add the song as a file and it plays here, offline.' : 'YouTube says the video is unavailable. Add the song as a file and it plays here, offline.'));
+      const more = h('div.th-np-more');
+      kids.push(h('div.btn-row.center', h('label.btn.primary', { for: pickId }, icon('upload', 16), h('span', 'Add the song file')), input,
+        btn('Get the song', { icon: 'download', onclick: () => mount(more, more.firstChild ? null : storeLinks(m)) }),
+        h('a.btn.ghost', { href: 'https://www.youtube.com/watch?v=' + m.yt, target: '_blank', rel: 'noopener' }, 'Open it on YouTube')), more);
     }
     else if (Player.broken.has(m.id)) kids.push(h('p.sub', 'MP4 (H.264 with AAC), WebM, MP3, M4A and FLAC play in every browser.'));
     else {
@@ -22927,7 +23440,7 @@ Views.make = {
           h('li', h('b', String(m.lines.length)), ' lines' + (isTimed(m) ? ', timed: the words light up with the music' : ', not timed yet: tap along once in Watch')),
           h('li', m.lines.filter(l => l.en).length ? '✓ ' + m.lines.filter(l => l.en).length + ' lines with a person’s translation' : '✗ No translation online'),
           bg ? h('li', h('span.spin'), ' ' + AI.name() + ' is translating the other lines in the background') : null,
-          h('li', m.fileName ? '✓ Your own file plays, also offline' : m.yt && fromDisk ? '✗ YouTube does not play in a page opened from disk: for the video, open this lesson in the phone app (xravia.github.io/kotonoha), or put the song in your media folder' : m.yt ? '✓ The video streams from YouTube (needs the internet)' : '✗ No video: the voice reads the lines'),
+          h('li', m.fileName ? '✓ Your own file plays, also offline' : m.yt && fromDisk ? '✓ The video plays through the game’s website (needs the internet); add the song as a file to play it offline' : m.yt ? '✓ The video streams from YouTube (needs the internet)' : '✗ No video: the voice reads the lines'),
           h('li', '✓ Words, readings, grammar and translations are saved on this device'),
           !m.fileName ? h('li.make-own', 'To play it offline: ', h('a', { href: '#', onclick: e => { e.preventDefault(); mount(own, own.firstChild ? null : storeLinks(m)); } }, 'buy the song as a file'),
             ' or ', h('label.linkish', { for: 'make-own-pick' }, 'add one you have'), songPicker(m, 'make-own-pick', () => this.draw()), '. ♡ Save keeps it on your shelf.') : null),
@@ -24126,7 +24639,7 @@ Views.guide = {
         h('li', h('b', 'The lesson. '), 'Kotonoha takes the Japanese lines, matches the English translation to each line by sound, and plays the song’s music video from YouTube. When LRCLIB has the song timed, lines light up with the music at once; otherwise you tap along once.'),
         h('li', h('b', 'Translations as practice. '), 'In Learn, the translation stays hidden until you have tried your own. Play gains a Line meaning game, and tests ask what whole lines mean.'),
         h('li', h('b', 'Your own songs too. '), 'On a lesson’s map, Tools > English translation finds the song and adds its translation to the lines you already have.'),
-        h('li', h('b', 'Where it works. '), 'Searching needs a connection. Music videos play in the web and phone version' + (BUILD.web ? ' (' + BUILD.web + ')' : '') + '; the copy opened from disk plays your own files.'))));
+        h('li', h('b', 'Where it works. '), 'Searching needs a connection, and so do music videos (in the copy opened from disk they play through the game’s website). Your own song files play anywhere, offline.'))));
     if (Local.allowed()) page.appendChild(h('section', h('h2', duo('言花', 'Kotohana, the AI on this device')),
       h('ul.plain',
         h('li', h('b', 'What it does. '), 'When Claude is not there, Kotohana, a small AI running on this device, does Claude’s jobs: conversation practice in Talk, a natural translation and a note for each line, a recap with context questions for each stage, answers to your questions about a line, a verdict on your own translation, and grading of the written answer in the final test.'),
@@ -24139,6 +24652,11 @@ Views.guide = {
         h('li', h('b', 'What it does. '), 'It finds the Japanese lyrics and the timing made for that video’s length (LRCLIB), a person’s English translation matched line by line (animesonglyrics.com, checked against the lyrics so it is the same song), breaks every line down, and writes a plan: how hard the song is for you, the words to learn first, the grammar you will meet, and a schedule of about 20 minutes a day.'),
         h('li', h('b', 'Why songs you choose. '), 'Material you want to hear again is material you will hear again. Comprehensible input works best a little above your level; the plan says whether a song is comfortable, a stretch or a challenge, so you can pick the next one well.'),
         h('li', h('b', 'If the words run early or late. '), 'Music videos often start with an intro. In Watch, “Sync in one tap”: tap the moment the first line starts, and every line moves with it.'))));
+    if (BUILD.local) page.appendChild(h('section', h('h2', duo('曲を追加', 'Many songs at once')),
+      h('ul.plain',
+        h('li', h('b', 'Add your songs. '), 'Library > Add your songs: drop songs anywhere in the game, or choose many files, a folder or an album ZIP. Each becomes a lesson by itself, one after another in the background: lyrics timed to your file, English when it is online, a plan, and each word timed from the singing. No video is needed, and everything plays offline.'),
+        h('li', h('b', 'Start at once. '), 'Open the first lesson as soon as it is ready; the others keep being made. The list survives closing the game and carries on next time.'),
+        h('li', h('b', 'If a song is not found. '), 'It asks which song it is: check the title and artist, then Look again, or add the words yourself.'))));
     if (BUILD.local) page.appendChild(h('section', h('h2', duo('保存', 'Saved songs, offline')),
       h('ul.plain',
         h('li', h('b', 'Save a song. '), 'The ♡ on a lesson (in the Library, on its map, or when it is made) puts it on the Library’s shelf of saved songs, which shows which ones play offline.'),
@@ -24337,6 +24855,7 @@ async function boot(snap) {
     // the media folder is looked at in the background after a short wait: a big or slow folder must not hold up the game
     step = 'folder';
     Shelf.init().catch(e => console.warn('shelf', e));
+    Batch.init().catch(e => console.warn('batch', e));
     const folderDone = Folder.init().catch(e => console.warn('folder', e));
     await Promise.race([folderDone, sleep(2500)]);
     step = 'start';
